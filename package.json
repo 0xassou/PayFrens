@@ -15,7 +15,9 @@
     "typecheck": "npm run typecheck --workspace web",
     "contracts:build": "forge build --root contracts",
     "contracts:test": "forge test --root contracts -vvv",
-    "contracts:fmt": "forge fmt --root contracts"
+    "contracts:fmt": "forge fmt --root contracts",
+    "abi:sync": "npm run contracts:build && node scripts/sync-abi.mjs",
+    "icons": "node scripts/generate-icons.mjs"
   },
   "engines": {
     "node": ">=20"

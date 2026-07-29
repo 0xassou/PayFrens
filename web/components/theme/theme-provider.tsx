@@ -1,6 +1,6 @@
 "use client";
 
-import {createContext, useCallback, useContext, useEffect, useMemo, useState} from "react";
+import {createContext, useCallback, useContext, useEffect, useMemo, useSyncExternalStore} from "react";
 
 /**
  * `system` follows the phone. `light` / `dark` are an explicit override the
@@ -12,6 +12,9 @@ export type ThemePreference = "system" | "light" | "dark";
 export type ResolvedTheme = "light" | "dark";
 
 export const THEME_STORAGE_KEY = "payfrens.theme";
+
+/** Fired when this tab changes the preference; `storage` only fires in others. */
+const THEME_CHANGE_EVENT = "payfrens:themechange";
 
 type ThemeContextValue = {
   /** What the user chose. */
@@ -25,61 +28,81 @@ type ThemeContextValue = {
 
 const ThemeContext = createContext<ThemeContextValue | null>(null);
 
+/* ---------------------------------------------------------------------------
+   The theme lives in localStorage and in the OS, not in React. Reading it with
+   `useSyncExternalStore` rather than an effect means the very first render
+   already has the right value — no post-mount setState, and no flash.
+--------------------------------------------------------------------------- */
+
+function subscribe(onChange: () => void): () => void {
+  const media = window.matchMedia("(prefers-color-scheme: dark)");
+
+  media.addEventListener("change", onChange);
+  window.addEventListener("storage", onChange);
+  window.addEventListener(THEME_CHANGE_EVENT, onChange);
+
+  return () => {
+    media.removeEventListener("change", onChange);
+    window.removeEventListener("storage", onChange);
+    window.removeEventListener(THEME_CHANGE_EVENT, onChange);
+  };
+}
+
+/**
+ * Snapshot as a string so `useSyncExternalStore`'s identity check works without
+ * a cache — returning a fresh object each call would loop forever.
+ */
+function getSnapshot(): string {
+  const preference = readStoredPreference();
+  const resolved = preference === "system" ? systemTheme() : preference;
+  return `${preference}:${resolved}`;
+}
+
+/**
+ * The server cannot know the phone's setting. It renders dark — matching the
+ * `<body>` class and the dark theme-color — and `ThemeScript` has already
+ * corrected the DOM by the time this hydrates.
+ */
+function getServerSnapshot(): string {
+  return "system:dark";
+}
+
 function systemTheme(): ResolvedTheme {
-  if (typeof window === "undefined") return "dark";
   return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
 }
 
 function readStoredPreference(): ThemePreference {
-  if (typeof window === "undefined") return "system";
-  const stored = window.localStorage.getItem(THEME_STORAGE_KEY);
-  return stored === "light" || stored === "dark" ? stored : "system";
-}
-
-function applyTheme(theme: ResolvedTheme) {
-  const root = document.documentElement;
-  root.classList.toggle("dark", theme === "dark");
-  // Keeps the webview chrome (status bar, pull-to-refresh) in step with the app.
-  root.style.colorScheme = theme;
+  try {
+    const stored = window.localStorage.getItem(THEME_STORAGE_KEY);
+    return stored === "light" || stored === "dark" ? stored : "system";
+  } catch {
+    // Private mode can throw on localStorage; following the phone is a fine
+    // answer when we cannot remember a choice.
+    return "system";
+  }
 }
 
 export function ThemeProvider({children}: {children: React.ReactNode}) {
-  // Matches what `ThemeScript` wrote before hydration, so the first render
-  // agrees with the DOM.
-  const [preference, setPreferenceState] = useState<ThemePreference>("system");
-  const [theme, setTheme] = useState<ResolvedTheme>("dark");
+  const snapshot = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
+  const [preference, theme] = snapshot.split(":") as [ThemePreference, ResolvedTheme];
 
+  // Pushing the class onto <html> is synchronising an external system with
+  // React state, which is exactly what an effect is for.
   useEffect(() => {
-    const stored = readStoredPreference();
-    setPreferenceState(stored);
-    setTheme(stored === "system" ? systemTheme() : stored);
-  }, []);
-
-  // Only listen while the user is on `system` — an explicit choice should not
-  // be overridden when the phone flips to night mode at sunset.
-  useEffect(() => {
-    if (preference !== "system") return;
-
-    const media = window.matchMedia("(prefers-color-scheme: dark)");
-    const onChange = (event: MediaQueryListEvent) => setTheme(event.matches ? "dark" : "light");
-
-    media.addEventListener("change", onChange);
-    return () => media.removeEventListener("change", onChange);
-  }, [preference]);
-
-  useEffect(() => {
-    applyTheme(theme);
+    const root = document.documentElement;
+    root.classList.toggle("dark", theme === "dark");
+    // Keeps the webview chrome (status bar, overscroll) in step with the app.
+    root.style.colorScheme = theme;
   }, [theme]);
 
   const setPreference = useCallback((next: ThemePreference) => {
-    setPreferenceState(next);
-    setTheme(next === "system" ? systemTheme() : next);
-
-    if (next === "system") {
-      window.localStorage.removeItem(THEME_STORAGE_KEY);
-    } else {
-      window.localStorage.setItem(THEME_STORAGE_KEY, next);
+    try {
+      if (next === "system") window.localStorage.removeItem(THEME_STORAGE_KEY);
+      else window.localStorage.setItem(THEME_STORAGE_KEY, next);
+    } catch {
+      // Not persisting is survivable — the choice still applies for this session.
     }
+    window.dispatchEvent(new Event(THEME_CHANGE_EVENT));
   }, []);
 
   const toggle = useCallback(() => {
