@@ -41,6 +41,18 @@ export default function HomePage() {
 
   return (
     <AppShell>
+      {/*
+       * Pitch for anyone who has not connected yet — which, inside Base App, is
+       * the brief moment before the wallet auto-connects. Purely presentational:
+       * it reads `isConnected` and renders nothing else, so it cannot delay or
+       * interfere with that connection.
+       */}
+      {!isConnected && (
+        <p className="mb-4 text-sm leading-snug font-semibold tracking-tight text-balance text-accent dark:text-accent-pressed">
+          Split any bill, any group. Get paid back in USDC, instantly.
+        </p>
+      )}
+
       <div className="mb-5">
         <h1 className="text-2xl font-bold tracking-tight text-content">
           {user?.displayName ? `Hey ${user.displayName.split(" ")[0]}` : "Your splits"}
