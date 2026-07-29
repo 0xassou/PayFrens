@@ -26,21 +26,23 @@ export function ConnectFallback() {
   // `undefined` means still detecting — stay quiet rather than guess.
   if (isInMiniApp !== false) return null;
   if (isConnected) return null;
-  if (connectors.length === 0) return null;
+
+  // wagmi auto-detects every EIP-6963 wallet extension the browser announces
+  // (Rabby, MetaMask, Keplr, ...) and appends one connector per wallet after
+  // whichever connector the app configured explicitly — here, Base Account.
+  // That explicit one is always first: wagmi pushes configured connectors into
+  // the store before it appends discovered ones, deduping by rdns. So
+  // connectors[0] is a stable target, not incidental ordering, and connecting
+  // straight to it keeps this a single button instead of a list that grows
+  // with whatever extensions happen to be installed.
+  const connector = connectors[0];
+  if (!connector) return null;
 
   return (
     <div className="mt-1 flex w-full flex-col items-center gap-2">
-      {connectors.map((connector) => (
-        <Button
-          key={connector.uid}
-          variant="secondary"
-          size="md"
-          loading={isPending}
-          onClick={() => connect({connector})}
-        >
-          {connectors.length === 1 ? "Connect Wallet" : `Connect with ${connector.name}`}
-        </Button>
-      ))}
+      <Button variant="secondary" size="md" loading={isPending} onClick={() => connect({connector})}>
+        Connect Wallet
+      </Button>
 
       {error && <p className="max-w-[26ch] text-xs text-danger">{friendlyError(error)}</p>}
     </div>
