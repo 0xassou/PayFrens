@@ -12,10 +12,33 @@ export const USDC_ADDRESS: Record<SupportedChainId, Address> = {
   [BASE_SEPOLIA_ID]: "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
 };
 
-/** Filled in from the deploy output — see `web/.env.example`. */
+/**
+ * Addresses of the deployments we ship against, recorded at deploy time.
+ * See `contracts/deployments/` for the matching tx hashes and constructor args.
+ *
+ * Baked in rather than env-only so the app works from a plain `git clone` and
+ * so a Vercel deploy needs no extra configuration to reach the live contract.
+ */
+const DEPLOYED_SPLITTER: Record<SupportedChainId, Address | undefined> = {
+  // Not deployed to mainnet yet.
+  [BASE_ID]: undefined,
+  [BASE_SEPOLIA_ID]: "0x61966a27d3a308A225ae2Faa20382B2A5Fa57A3E",
+};
+
+/** Treats an unset *or* empty env var as absent, so a blank Vercel field falls back. */
+function envAddress(value: string | undefined): Address | undefined {
+  return value && value.length > 0 ? (value as Address) : undefined;
+}
+
+/**
+ * Env wins over the baked-in address, so a preview deployment can point at a
+ * different contract without a code change. See `web/.env.example`.
+ */
 export const SPLITTER_ADDRESS: Record<SupportedChainId, Address | undefined> = {
-  [BASE_ID]: process.env.NEXT_PUBLIC_SPLITTER_ADDRESS_BASE as Address | undefined,
-  [BASE_SEPOLIA_ID]: process.env.NEXT_PUBLIC_SPLITTER_ADDRESS_BASE_SEPOLIA as Address | undefined,
+  [BASE_ID]: envAddress(process.env.NEXT_PUBLIC_SPLITTER_ADDRESS_BASE) ?? DEPLOYED_SPLITTER[BASE_ID],
+  [BASE_SEPOLIA_ID]:
+    envAddress(process.env.NEXT_PUBLIC_SPLITTER_ADDRESS_BASE_SEPOLIA) ??
+    DEPLOYED_SPLITTER[BASE_SEPOLIA_ID],
 };
 
 export const CHAINS: Record<SupportedChainId, Chain> = {
