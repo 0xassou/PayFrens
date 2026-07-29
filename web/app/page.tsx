@@ -46,6 +46,9 @@ export default function HomePage() {
        * the brief moment before the wallet auto-connects. Purely presentational:
        * it reads `isConnected` and renders nothing else, so it cannot delay or
        * interfere with that connection.
+       *
+       * Gated on the same `isConnected` as the "Connect to see your splits"
+       * empty state below, so the two always appear and disappear together.
        */}
       {!isConnected && (
         <p className="mb-4 text-sm leading-snug font-semibold tracking-tight text-balance text-accent dark:text-accent-pressed">
