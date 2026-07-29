@@ -7,6 +7,7 @@ import {useComposeCast} from "@coinbase/onchainkit/minikit";
 import {AppShell} from "@/components/app-shell";
 import {ParticipantList} from "@/components/split/participant-list";
 import {WithdrawSheet} from "@/components/split/withdraw-sheet";
+import {WithdrawalPolicy} from "@/components/split/withdrawal-policy";
 import {Badge} from "@/components/ui/badge";
 import {Button} from "@/components/ui/button";
 import {ProgressBar} from "@/components/ui/progress-bar";
@@ -125,6 +126,15 @@ export function SplitScreen({id}: {id: string}) {
           </p>
         </div>
 
+        {/* Moot once cancelled — nothing gets withdrawn, only refunded. */}
+        {!cancelled && (
+          <WithdrawalPolicy
+            allowPartial={split.allowPartialWithdraw}
+            isCreator={Boolean(address && split.creator.toLowerCase() === address.toLowerCase())}
+            className="mb-6"
+          />
+        )}
+
         <h2 className="mb-2.5 text-xs font-semibold tracking-wide text-content-subtle uppercase">
           Who&apos;s in
         </h2>
@@ -158,6 +168,7 @@ export function SplitScreen({id}: {id: string}) {
           role={role}
           share={share}
           available={available}
+          allowPartial={split.allowPartialWithdraw}
           pay={pay}
           refund={refund}
           onWithdraw={() => setWithdrawRequested(true)}
@@ -182,6 +193,7 @@ function Action({
   role,
   share,
   available,
+  allowPartial,
   pay,
   refund,
   onWithdraw,
@@ -189,6 +201,7 @@ function Action({
   role: ReturnType<typeof viewerRole>;
   share: bigint | null;
   available: bigint;
+  allowPartial: boolean;
   pay: ReturnType<typeof usePayShare>;
   refund: ReturnType<typeof useClaimRefund>;
   onWithdraw: () => void;
@@ -227,9 +240,11 @@ function Action({
       );
 
     case "creator-awaiting":
+      // With partial withdrawal on, the creator is only waiting for the first
+      // payment — there is nothing to withdraw yet, not nobody left to pay.
       return (
         <Button size="lg" fullWidth disabled>
-          Waiting on everyone to pay
+          {allowPartial ? "Waiting for the first payment" : "Waiting on everyone to pay"}
         </Button>
       );
 

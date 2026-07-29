@@ -14,6 +14,7 @@ import {
 import {Button} from "@/components/ui/button";
 import {Field, Input} from "@/components/ui/field";
 import {Spinner} from "@/components/ui/spinner";
+import {Toggle} from "@/components/ui/toggle";
 import {cn} from "@/lib/cn";
 import {formatUsdc, parseUsdc} from "@/lib/format";
 import {useMiniAppReady} from "@/lib/hooks/use-mini-app";
@@ -169,23 +170,16 @@ function CreateScreen() {
           )}
         </div>
 
-        <label className="flex cursor-pointer items-start gap-3 rounded-card border border-border bg-surface p-3.5">
-          <input
-            type="checkbox"
-            checked={allowPartial}
-            onChange={(event) => setAllowPartial(event.target.checked)}
-            className="mt-0.5 size-4 accent-[var(--accent)]"
-          />
-          <span>
-            <span className="block text-sm font-medium text-content">
-              Let me withdraw before everyone pays
-            </span>
-            <span className="mt-0.5 block text-xs text-content-muted">
-              Useful for an open collection where a straggler might never pay. Off by default, so
-              the money stays put until the bill is fully settled.
-            </span>
-          </span>
-        </label>
+        {/* Sets `allowPartialWithdraw` on the split. It is fixed at creation —
+            the contract has no setter — so the consequence is spelled out here,
+            while it can still be changed. */}
+        <Toggle
+          checked={allowPartial}
+          onChange={setAllowPartial}
+          label="Allow partial withdrawal"
+          description="Off by default: you close the split in one go, once everyone has paid."
+          activeDescription="You'll be able to withdraw as people pay, even if not everyone has settled up yet."
+        />
 
         {error && (
           <p className="rounded-card bg-danger-subtle px-3.5 py-3 text-sm text-danger">
