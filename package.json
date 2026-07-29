@@ -1,0 +1,23 @@
+{
+  "name": "payfrens",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Split bills in USDC on Base — a mini-app for Base App",
+  "license": "MIT",
+  "workspaces": [
+    "web"
+  ],
+  "scripts": {
+    "dev": "npm run dev --workspace web",
+    "build": "npm run build --workspace web",
+    "start": "npm run start --workspace web",
+    "lint": "npm run lint --workspace web",
+    "typecheck": "npm run typecheck --workspace web",
+    "contracts:build": "forge build --root contracts",
+    "contracts:test": "forge test --root contracts -vvv",
+    "contracts:fmt": "forge fmt --root contracts"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
