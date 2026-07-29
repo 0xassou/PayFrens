@@ -1,0 +1,243 @@
+@import "tailwindcss";
+
+/* ---------------------------------------------------------------------------
+   Theming strategy
+
+   Nothing in this app names a colour. Components reference semantic tokens
+   (`bg-surface`, `text-content-muted`, `bg-accent`) and the two blocks below
+   decide what those mean. Adding a theme means adding a block, not touching a
+   component.
+
+   `dark` is a class on <html>, not a media query, so the phone's system setting
+   and the in-app toggle can both drive it. `ThemeProvider` sets the class;
+   `theme-script.tsx` sets it before first paint so there is no flash.
+--------------------------------------------------------------------------- */
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* --- Light ---------------------------------------------------------------- */
+:root {
+  color-scheme: light;
+
+  /* Surfaces. `app` is the page, `surface` is a card, `sunken` is a well. */
+  --app: #fafbff;
+  --surface: #ffffff;
+  --surface-raised: #ffffff;
+  --surface-sunken: #f1f4fd;
+  --surface-hover: #f5f7fe;
+
+  /* Text. Deliberately charcoal rather than pure black — #000 on #FAFBFF is
+     harsh on an OLED phone held at arm's length. */
+  --content: #262d40;
+  --content-muted: #5b6478;
+  --content-subtle: #8b94a8;
+  --content-inverted: #ffffff;
+
+  --border: #e4e9f5;
+  --border-strong: #cfd7ea;
+
+  /* Base blue. Identical in both themes — it is the brand. */
+  --accent: #0052ff;
+  --accent-hover: #003ecc;
+  --accent-pressed: #0032a6;
+  --accent-content: #ffffff;
+  --accent-subtle: #e8efff;
+  --accent-ring: #0052ff40;
+
+  /* Mint. More saturated here so it holds up against a white card. */
+  --success: #00a06b;
+  --success-content: #ffffff;
+  --success-subtle: #d8f7ea;
+  --success-border: #7fdcbb;
+
+  --warning: #b26a00;
+  --warning-subtle: #fdf0d5;
+
+  --danger: #d02c3a;
+  --danger-content: #ffffff;
+  --danger-subtle: #fde8ea;
+
+  --overlay: #0a0e1a4d;
+
+  --shadow-card: 0 1px 2px #262d400a, 0 4px 16px #262d400f;
+  --shadow-raised: 0 2px 4px #262d400f, 0 12px 32px #262d4014;
+  --shadow-accent: 0 4px 16px #0052ff33;
+}
+
+/* --- Dark ----------------------------------------------------------------- */
+.dark {
+  color-scheme: dark;
+
+  --app: #0a0e1a;
+  --surface: #121829;
+  --surface-raised: #1a2137;
+  --surface-sunken: #070a13;
+  --surface-hover: #1c2540;
+
+  --content: #f2f5ff;
+  --content-muted: #a3aecb;
+  --content-subtle: #6d7899;
+  --content-inverted: #0a0e1a;
+
+  --border: #222c45;
+  --border-strong: #33405f;
+
+  --accent: #0052ff;
+  --accent-hover: #2e6dff;
+  --accent-pressed: #4a80ff;
+  --accent-content: #ffffff;
+  --accent-subtle: #0052ff26;
+  --accent-ring: #4a80ff59;
+
+  /* Mint, softened — a saturated green glows unpleasantly on #0A0E1A. */
+  --success: #3ddc97;
+  --success-content: #052018;
+  --success-subtle: #3ddc971f;
+  --success-border: #3ddc974d;
+
+  --warning: #f0b054;
+  --warning-subtle: #f0b0541f;
+
+  --danger: #ff6b7a;
+  --danger-content: #2a0508;
+  --danger-subtle: #ff6b7a1f;
+
+  --overlay: #00000099;
+
+  --shadow-card: 0 1px 2px #00000059, 0 4px 16px #00000040;
+  --shadow-raised: 0 2px 4px #00000066, 0 12px 32px #0000004d;
+  --shadow-accent: 0 4px 20px #0052ff4d;
+}
+
+/* ---------------------------------------------------------------------------
+   Token → utility mapping.
+
+   `@theme inline` keeps the `var(--…)` reference intact instead of baking in a
+   value, which is what lets a single `.dark` class re-theme the whole tree.
+--------------------------------------------------------------------------- */
+@theme inline {
+  --color-app: var(--app);
+  --color-surface: var(--surface);
+  --color-surface-raised: var(--surface-raised);
+  --color-surface-sunken: var(--surface-sunken);
+  --color-surface-hover: var(--surface-hover);
+
+  --color-content: var(--content);
+  --color-content-muted: var(--content-muted);
+  --color-content-subtle: var(--content-subtle);
+  --color-content-inverted: var(--content-inverted);
+
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-accent-pressed: var(--accent-pressed);
+  --color-accent-content: var(--accent-content);
+  --color-accent-subtle: var(--accent-subtle);
+
+  --color-success: var(--success);
+  --color-success-content: var(--success-content);
+  --color-success-subtle: var(--success-subtle);
+  --color-success-border: var(--success-border);
+
+  --color-warning: var(--warning);
+  --color-warning-subtle: var(--warning-subtle);
+
+  --color-danger: var(--danger);
+  --color-danger-content: var(--danger-content);
+  --color-danger-subtle: var(--danger-subtle);
+
+  --color-overlay: var(--overlay);
+
+  /* System stack rather than a webfont: inside Base App this renders as SF Pro
+     on iOS and Roboto on Android, so the mini-app matches the OS instead of
+     arriving a beat late after a font download. */
+  --font-sans:
+    -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, "Helvetica Neue",
+    system-ui, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, monospace;
+
+  /* Generous by default — every tap target here is a thumb on a phone. */
+  --radius-card: 1rem;
+  --radius-sheet: 1.5rem;
+  --radius-pill: 9999px;
+
+  --shadow-card: var(--shadow-card);
+  --shadow-raised: var(--shadow-raised);
+  --shadow-accent: var(--shadow-accent);
+
+  --ease-out-quint: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* --- Base ----------------------------------------------------------------- */
+@layer base {
+  * {
+    border-color: var(--border);
+  }
+
+  html {
+    -webkit-text-size-adjust: 100%;
+    /* Stop iOS rubber-banding revealing white behind a dark mini-app. */
+    background-color: var(--app);
+  }
+
+  body {
+    background-color: var(--app);
+    color: var(--content);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+    /* Base App renders the mini-app inside a sheet; a horizontal scrollbar
+       there looks broken, so pin the width. */
+    overflow-x: hidden;
+  }
+
+  /* Base App is a webview: a stray long-press selection or tap highlight reads
+     as a bug rather than a feature. */
+  button,
+  [role="button"] {
+    -webkit-tap-highlight-color: transparent;
+    touch-action: manipulation;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+
+  /* Numbers in a bill splitter should line up in a column. */
+  .tabular {
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+@layer utilities {
+  /* Home-indicator clearance for a sticky pay button. */
+  .pb-safe {
+    padding-bottom: max(1rem, env(safe-area-inset-bottom));
+  }
+
+  .pt-safe {
+    padding-top: max(0.75rem, env(safe-area-inset-top));
+  }
+
+  .no-scrollbar {
+    scrollbar-width: none;
+  }
+
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+/* Respect the OS setting for people who ask for less motion. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
