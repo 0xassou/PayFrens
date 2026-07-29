@@ -4,6 +4,7 @@ import Link from "next/link";
 import {useMemo} from "react";
 import {useAccount} from "wagmi";
 import {AppShell} from "@/components/app-shell";
+import {ConnectFallback} from "@/components/connect-fallback";
 import {EmptyState} from "@/components/empty-state";
 import {SplitCard} from "@/components/split/split-card";
 import {Button} from "@/components/ui/button";
@@ -78,6 +79,9 @@ export default function HomePage() {
         <EmptyState
           title="Connect to see your splits"
           description="Open PayFrens inside Base App and your wallet connects automatically."
+          // Secondary route for anyone outside Base App, where nothing
+          // auto-connects. Renders itself away inside the mini app.
+          action={<ConnectFallback />}
         />
       ) : isLoading ? (
         <div className="flex justify-center py-12 text-content-subtle">
