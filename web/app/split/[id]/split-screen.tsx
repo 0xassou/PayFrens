@@ -13,6 +13,7 @@ import {Button} from "@/components/ui/button";
 import {ProgressBar} from "@/components/ui/progress-bar";
 import {Spinner} from "@/components/ui/spinner";
 import {APP_URL} from "@/lib/env";
+import {friendlyError} from "@/lib/errors";
 import {formatUsdc, relativeTime} from "@/lib/format";
 import {useMiniAppReady} from "@/lib/hooks/use-mini-app";
 import {useProfiles} from "@/lib/hooks/use-profiles";
@@ -322,16 +323,6 @@ function safeId(id: string): bigint | undefined {
   } catch {
     return undefined;
   }
-}
-
-function friendlyError(error: Error): string {
-  const message = error.message ?? "";
-  if (/User rejected|denied|UserRejected/i.test(message)) return "Cancelled.";
-  if (/AlreadyPaid/i.test(message)) return "That share is already paid.";
-  if (/NotFullyPaid/i.test(message)) return "Not everyone has paid yet.";
-  if (/insufficient|exceeds balance/i.test(message)) return "Not enough USDC in your wallet.";
-  if (/NotParticipant/i.test(message)) return "You're not part of this split.";
-  return "Something went wrong. Please try again.";
 }
 
 function CheckIcon() {

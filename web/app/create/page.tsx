@@ -21,6 +21,7 @@ import {useMiniAppReady} from "@/lib/hooks/use-mini-app";
 import {useProfiles} from "@/lib/hooks/use-profiles";
 import {useCreateSplit} from "@/lib/hooks/use-split-actions";
 import {useSplit} from "@/lib/hooks/use-splits";
+import {friendlyError, reportError} from "@/lib/errors";
 
 type Mode = "even" | "custom";
 
@@ -45,7 +46,7 @@ function CreateScreen() {
 
   const router = useRouter();
   const params = useSearchParams();
-  const {address} = useAccount();
+  const {address, isConnected} = useAccount();
 
   const [mode, setMode] = useState<Mode>("even");
   const [totalInput, setTotalInput] = useState("");
@@ -78,7 +79,7 @@ function CreateScreen() {
     return entries.reduce((sum, entry) => sum + (parseUsdc(entry.share) ?? 0n), 0n);
   }, [entries, mode, totalInput]);
 
-  const problem = validate({mode, entries, total, totalInput});
+  const problem = validate({mode, entries, total, totalInput, isConnected});
 
   useEffect(() => {
     if (createdId !== null) router.push(`/split/${createdId}`);
@@ -89,16 +90,23 @@ function CreateScreen() {
 
     const participants = entries.map((entry) => entry.address as Address);
 
-    await create(
-      mode === "even"
-        ? {title: title.trim(), participants, total, allowPartialWithdraw: allowPartial}
-        : {
-            title: title.trim(),
-            participants,
-            shares: entries.map((entry) => parseUsdc(entry.share) ?? 0n),
-            allowPartialWithdraw: allowPartial,
-          },
-    );
+    try {
+      await create(
+        mode === "even"
+          ? {title: title.trim(), participants, total, allowPartialWithdraw: allowPartial}
+          : {
+              title: title.trim(),
+              participants,
+              shares: entries.map((entry) => parseUsdc(entry.share) ?? 0n),
+              allowPartialWithdraw: allowPartial,
+            },
+      );
+    } catch (cause) {
+      // The hook already stores this for the banner. Caught here so it does not
+      // escape as an unhandled rejection, and logged so the underlying cause is
+      // one console open away rather than lost behind the friendly copy.
+      reportError("createSplit failed", cause as Error);
+    }
   }
 
   return (
@@ -237,12 +245,21 @@ function validate({
   entries,
   total,
   totalInput,
+  isConnected,
 }: {
   mode: Mode;
   entries: Entry[];
   total: bigint;
   totalInput: string;
+  isConnected: boolean;
 }): string | null {
+  // Checked first: without a wallet the write reverts with
+  // ConnectorNotConnectedError before a transaction is ever built, and no
+  // amount of retrying fixes it. Outside Base App — a desktop browser, say —
+  // nothing connects automatically, so this is the common case rather than the
+  // edge one.
+  if (!isConnected) return "Connect your wallet";
+
   if (entries.length === 0) return "Add someone";
 
   if (mode === "even") {
@@ -262,10 +279,3 @@ function validate({
   return null;
 }
 
-function friendlyError(error: Error): string {
-  const message = error.message ?? "";
-  if (/User rejected|denied|UserRejected/i.test(message)) return "Transaction cancelled.";
-  if (/DuplicateParticipant/i.test(message)) return "Someone is in the list twice.";
-  if (/TooManyParticipants/i.test(message)) return "That's more than 100 people.";
-  return "Couldn't create the split. Please try again.";
-}
