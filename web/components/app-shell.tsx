@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import {ThemeToggle} from "@/components/theme/theme-toggle";
+import {NetworkBanner} from "@/components/wallet/network-banner";
 import {cn} from "@/lib/cn";
 
 /**
@@ -55,7 +56,10 @@ export function AppShell({
         </div>
       </header>
 
-      <main className={cn("flex-1 px-4 pb-safe", className)}>{children}</main>
+      <main className={cn("flex-1 px-4 pb-safe", className)}>
+        <NetworkBanner />
+        {children}
+      </main>
     </div>
   );
 }
