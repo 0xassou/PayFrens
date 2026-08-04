@@ -3,7 +3,7 @@
 import Link from "next/link";
 import {useEffect, useState} from "react";
 import {useAccount} from "wagmi";
-import {useComposeCast} from "@coinbase/onchainkit/minikit";
+import {useComposeCast, useIsInMiniApp} from "@coinbase/onchainkit/minikit";
 import {AppShell} from "@/components/app-shell";
 import {ParticipantList} from "@/components/split/participant-list";
 import {WithdrawSheet} from "@/components/split/withdraw-sheet";
@@ -13,7 +13,7 @@ import {Button} from "@/components/ui/button";
 import {ProgressBar} from "@/components/ui/progress-bar";
 import {Spinner} from "@/components/ui/spinner";
 import {APP_URL} from "@/lib/env";
-import {friendlyError} from "@/lib/errors";
+import {friendlyError, reportError} from "@/lib/errors";
 import {formatUsdc, relativeTime} from "@/lib/format";
 import {useMiniAppReady} from "@/lib/hooks/use-mini-app";
 import {useProfiles} from "@/lib/hooks/use-profiles";
@@ -282,31 +282,70 @@ function Action({
   }
 }
 
+/**
+ * `composeCast` only works inside the Base App / Farcaster Mini App host — it
+ * talks to that host over postMessage, and outside a Mini App frame the app
+ * ends up messaging itself, so the call hangs forever with no error. Split
+ * links are opened by anyone, most of whom land here in a plain browser, so
+ * this falls back to the Web Share API and finally to a clipboard copy.
+ */
 function ShareButton({splitId, title}: {splitId: string; title: string}) {
-  const {composeCast} = useComposeCast();
+  const {isInMiniApp} = useIsInMiniApp();
+  const {composeCast, error} = useComposeCast();
+  const [copied, setCopied] = useState(false);
+
+  useEffect(() => {
+    if (error) reportError("share split", error);
+  }, [error]);
+
+  const handleShare = async () => {
+    const url = `${APP_URL}/split/${splitId}`;
+    const text = title
+      ? `Splitting ${title} on PayFrens — grab your share 👇`
+      : "Split this with me on PayFrens 👇";
+
+    if (isInMiniApp) {
+      composeCast({text, embeds: [url]});
+      return;
+    }
+
+    if (typeof navigator !== "undefined" && navigator.share) {
+      try {
+        await navigator.share({title: title || "PayFrens split", text, url});
+      } catch {
+        // User dismissed the native share sheet — not a failure.
+      }
+      return;
+    }
+
+    await navigator.clipboard.writeText(url);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  };
 
   return (
     <button
       type="button"
-      aria-label="Share this split"
-      onClick={() =>
-        composeCast({
-          text: title ? `Splitting ${title} on PayFrens — grab your share 👇` : "Split this with me on PayFrens 👇",
-          embeds: [`${APP_URL}/split/${splitId}`],
-        })
-      }
+      aria-label={copied ? "Link copied" : "Share this split"}
+      onClick={() => void handleShare()}
       className="flex size-9 items-center justify-center rounded-pill text-content-muted transition-colors hover:bg-surface-hover hover:text-content"
     >
-      <svg viewBox="0 0 24 24" fill="none" className="size-5" aria-hidden="true">
-        <path
-          d="M12 15.5V4m0 0L8 8m4-4 4 4M5 14v4.5A1.5 1.5 0 0 0 6.5 20h11a1.5 1.5 0 0 0 1.5-1.5V14"
-          stroke="currentColor"
-          strokeWidth="1.9"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        />
-      </svg>
+      {copied ? <CheckIcon /> : <ShareIcon />}
     </button>
+  );
+}
+
+function ShareIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" className="size-5" aria-hidden="true">
+      <path
+        d="M12 15.5V4m0 0L8 8m4-4 4 4M5 14v4.5A1.5 1.5 0 0 0 6.5 20h11a1.5 1.5 0 0 0 1.5-1.5V14"
+        stroke="currentColor"
+        strokeWidth="1.9"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
   );
 }
 
