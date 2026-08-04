@@ -38,8 +38,7 @@ contract PayFrensSplitterTest is Test {
     );
     event SplitFunded(uint256 indexed splitId, uint256 totalAmount);
     event Withdrawn(uint256 indexed splitId, address indexed creator, uint256 netAmount, uint256 feeAmount);
-    event SplitCancelled(uint256 indexed splitId, uint256 amountRefundable);
-    event RefundClaimed(uint256 indexed splitId, address indexed participant, uint256 amount);
+    event SplitCancelled(uint256 indexed splitId);
     event TreasuryUpdated(address indexed previousTreasury, address indexed newTreasury);
     event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
 
@@ -194,7 +193,7 @@ contract PayFrensSplitterTest is Test {
         vm.prank(creator);
         splitter.pay(id);
 
-        (, bool paid,) = splitter.getParticipant(id, creator);
+        (, bool paid) = splitter.getParticipant(id, creator);
         assertTrue(paid);
     }
 
@@ -422,7 +421,7 @@ contract PayFrensSplitterTest is Test {
         assertEq(usdc.balanceOf(creator), creatorBefore - 10 * ONE);
         assertEq(usdc.balanceOf(bob), bobBefore, "spotted friend pays nothing");
 
-        (, bool paid,) = splitter.getParticipant(id, bob);
+        (, bool paid) = splitter.getParticipant(id, bob);
         assertTrue(paid);
     }
 
@@ -525,7 +524,7 @@ contract PayFrensSplitterTest is Test {
             revert("expected revert");
         } catch {}
 
-        (, bool paid,) = splitter.getParticipant(id, alice);
+        (, bool paid) = splitter.getParticipant(id, alice);
         assertFalse(paid);
         assertEq(splitter.getSplit(id).amountPaid, 0);
         assertEq(splitter.getSplit(id).paidCount, 0);
@@ -666,8 +665,9 @@ contract PayFrensSplitterTest is Test {
     }
 
     function test_Withdraw_RevertsAfterCancellation() public {
+        // Cancellation only succeeds before anyone has paid, so that is the
+        // only state this scenario can start from.
         uint256 id = _createEven30();
-        _payAll(id);
 
         vm.prank(creator);
         splitter.cancel(id);
@@ -741,38 +741,21 @@ contract PayFrensSplitterTest is Test {
     }
 
     /*//////////////////////////////////////////////////////////////
-                         CANCELLATION & REFUNDS
+                                CANCELLATION
     //////////////////////////////////////////////////////////////*/
 
-    function test_Cancel_OpensRefundsAndReturnsEveryCent() public {
+    /// @dev Nobody has money on the line yet, so cancelling is a clean no-op
+    ///      for everyone involved.
+    function test_Cancel_WorksBeforeAnyPaymentAndEmitsSplitCancelled() public {
         uint256 id = _createEven30();
 
-        vm.prank(alice);
-        splitter.pay(id);
-        vm.prank(bob);
-        splitter.pay(id);
-
-        uint256 aliceBefore = usdc.balanceOf(alice);
-
-        vm.expectEmit(true, false, false, true);
-        emit SplitCancelled(id, 20 * ONE);
+        vm.expectEmit(true, false, false, false);
+        emit SplitCancelled(id);
         vm.prank(creator);
         splitter.cancel(id);
 
-        vm.expectEmit(true, true, false, true);
-        emit RefundClaimed(id, alice, 10 * ONE);
-        vm.prank(alice);
-        uint256 refunded = splitter.claimRefund(id);
-
-        // Refunds are fee-free: exactly what went in comes back out.
-        assertEq(refunded, 10 * ONE);
-        assertEq(usdc.balanceOf(alice), aliceBefore + 10 * ONE);
-        assertEq(usdc.balanceOf(treasury), 0, "no fee on a refund");
-
-        vm.prank(bob);
-        splitter.claimRefund(id);
-        assertEq(usdc.balanceOf(address(splitter)), 0);
-        assertEq(splitter.getSplit(id).amountPaid, 0);
+        PayFrensSplitter.SplitView memory s = splitter.getSplit(id);
+        assertEq(uint8(s.status), uint8(PayFrensSplitter.SplitStatus.Cancelled));
     }
 
     function test_Cancel_RevertsForNonCreator() public {
@@ -794,8 +777,34 @@ contract PayFrensSplitterTest is Test {
         splitter.cancel(id);
     }
 
-    /// @dev Once money has left, the split is settled — the creator cannot
-    ///      cancel to claw back a refund from participants.
+    /// @dev The instant one participant has paid, the split has to run its
+    ///      course — the rest pay their share normally, nobody gets a refund.
+    function test_Cancel_RevertsOnceSomeoneHasPaid() public {
+        uint256 id = _createEven30();
+
+        vm.prank(alice);
+        splitter.pay(id);
+
+        vm.expectRevert(abi.encodeWithSelector(PayFrensSplitter.PaymentsAlreadyStarted.selector, id));
+        vm.prank(creator);
+        splitter.cancel(id);
+    }
+
+    /// @dev Paying for someone else still counts as "money is on the line" —
+    ///      `payFor` cannot be used to sneak past the cancellation window.
+    function test_Cancel_RevertsOnceSomeoneHasPaidForAnother() public {
+        uint256 id = _createEven30();
+
+        vm.prank(alice);
+        splitter.payFor(id, bob);
+
+        vm.expectRevert(abi.encodeWithSelector(PayFrensSplitter.PaymentsAlreadyStarted.selector, id));
+        vm.prank(creator);
+        splitter.cancel(id);
+    }
+
+    /// @dev A fortiori once the creator has withdrawn — the payment guard
+    ///      already blocks cancellation well before withdrawal is possible.
     function test_Cancel_RevertsAfterAnyWithdrawal() public {
         vm.prank(creator);
         uint256 id = splitter.createEvenSplit("Gift", _trio(), 30 * ONE, true);
@@ -805,97 +814,9 @@ contract PayFrensSplitterTest is Test {
         vm.prank(creator);
         splitter.withdraw(id);
 
-        vm.expectRevert(abi.encodeWithSelector(PayFrensSplitter.AlreadyWithdrawn.selector, id));
+        vm.expectRevert(abi.encodeWithSelector(PayFrensSplitter.PaymentsAlreadyStarted.selector, id));
         vm.prank(creator);
         splitter.cancel(id);
-    }
-
-    function test_ClaimRefund_RevertsOnDoubleClaim() public {
-        uint256 id = _createEven30();
-
-        vm.prank(alice);
-        splitter.pay(id);
-        vm.prank(creator);
-        splitter.cancel(id);
-
-        vm.prank(alice);
-        splitter.claimRefund(id);
-
-        vm.expectRevert(abi.encodeWithSelector(PayFrensSplitter.NothingToRefund.selector, id, alice));
-        vm.prank(alice);
-        splitter.claimRefund(id);
-    }
-
-    function test_ClaimRefund_RevertsForSomeoneWhoNeverPaid() public {
-        uint256 id = _createEven30();
-
-        vm.prank(alice);
-        splitter.pay(id);
-        vm.prank(creator);
-        splitter.cancel(id);
-
-        vm.expectRevert(abi.encodeWithSelector(PayFrensSplitter.NothingToRefund.selector, id, bob));
-        vm.prank(bob);
-        splitter.claimRefund(id);
-    }
-
-    function test_ClaimRefund_RevertsForANonParticipant() public {
-        uint256 id = _createEven30();
-
-        vm.prank(creator);
-        splitter.cancel(id);
-
-        vm.expectRevert(abi.encodeWithSelector(PayFrensSplitter.NotParticipant.selector, id, stranger));
-        vm.prank(stranger);
-        splitter.claimRefund(id);
-    }
-
-    function test_ClaimRefund_RevertsWhileTheSplitIsStillOpen() public {
-        uint256 id = _createEven30();
-
-        vm.prank(alice);
-        splitter.pay(id);
-
-        vm.expectRevert(abi.encodeWithSelector(PayFrensSplitter.SplitNotCancelled.selector, id));
-        vm.prank(alice);
-        splitter.claimRefund(id);
-    }
-
-    /// @dev The spotted friend, not the payer, owns the refund. Alice fronts
-    ///      Bob's share; on cancellation the money goes back to Bob, and Alice —
-    ///      who is herself a participant but has not settled her own share — has
-    ///      nothing to claim.
-    function test_ClaimRefund_GoesToTheParticipantNotThePayer() public {
-        uint256 id = _createEven30();
-
-        vm.prank(alice);
-        splitter.payFor(id, bob);
-
-        vm.prank(creator);
-        splitter.cancel(id);
-
-        vm.expectRevert(abi.encodeWithSelector(PayFrensSplitter.NothingToRefund.selector, id, alice));
-        vm.prank(alice);
-        splitter.claimRefund(id);
-
-        uint256 bobBefore = usdc.balanceOf(bob);
-        vm.prank(bob);
-        splitter.claimRefund(id);
-        assertEq(usdc.balanceOf(bob), bobBefore + 10 * ONE);
-    }
-
-    /// @dev And someone outside the split entirely is rejected earlier still.
-    function test_ClaimRefund_RevertsForAnOutsidePayer() public {
-        uint256 id = _createEven30();
-
-        vm.prank(creator);
-        splitter.payFor(id, bob);
-        vm.prank(creator);
-        splitter.cancel(id);
-
-        vm.expectRevert(abi.encodeWithSelector(PayFrensSplitter.NotParticipant.selector, id, creator));
-        vm.prank(creator);
-        splitter.claimRefund(id);
     }
 
     /*//////////////////////////////////////////////////////////////

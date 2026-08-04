@@ -110,17 +110,16 @@ export type ViewerRole =
   | "creator-settled" // created it, already withdrawn
   | "participant-owes" // in it, hasn't paid
   | "participant-paid" // in it, has paid
-  | "refundable" // cancelled, and this viewer is owed money back
-  | "observer"; // not involved, or not connected
+  | "observer"; // not involved, not connected, or the split was cancelled
 
 export function viewerRole(split: Split, account?: Address): ViewerRole {
   const isCreator = Boolean(account && split.creator.toLowerCase() === account.toLowerCase());
   const inSplit = Boolean(account && indexOf(split, account) !== -1);
   const paid = hasPaid(split, account);
 
-  if (split.status === SplitStatus.Cancelled) {
-    return inSplit && paid ? "refundable" : "observer";
-  }
+  // Cancellation only succeeds before anyone has paid, so a cancelled split
+  // never has anyone owed money back — nothing left to do here either way.
+  if (split.status === SplitStatus.Cancelled) return "observer";
 
   if (isCreator) {
     if (withdrawable(split) > 0n && (isFullyPaid(split) || split.allowPartialWithdraw)) {

@@ -119,25 +119,6 @@ export const payFrensSplitterAbi = [
   },
   {
     "type": "function",
-    "name": "claimRefund",
-    "inputs": [
-      {
-        "name": "splitId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "amount",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
     "name": "createEvenSplit",
     "inputs": [
       {
@@ -227,11 +208,6 @@ export const payFrensSplitterAbi = [
       },
       {
         "name": "paid",
-        "type": "bool",
-        "internalType": "bool"
-      },
-      {
-        "name": "refunded",
         "type": "bool",
         "internalType": "bool"
       }
@@ -768,31 +744,6 @@ export const payFrensSplitterAbi = [
   },
   {
     "type": "event",
-    "name": "RefundClaimed",
-    "inputs": [
-      {
-        "name": "splitId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "participant",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "amount",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
     "name": "SharePaid",
     "inputs": [
       {
@@ -842,12 +793,6 @@ export const payFrensSplitterAbi = [
         "name": "splitId",
         "type": "uint256",
         "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "amountRefundable",
-        "type": "uint256",
-        "indexed": false,
         "internalType": "uint256"
       }
     ],
@@ -983,17 +928,6 @@ export const payFrensSplitterAbi = [
   },
   {
     "type": "error",
-    "name": "AlreadyWithdrawn",
-    "inputs": [
-      {
-        "name": "splitId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
     "name": "DuplicateParticipant",
     "inputs": [
       {
@@ -1063,23 +997,18 @@ export const payFrensSplitterAbi = [
   },
   {
     "type": "error",
-    "name": "NothingToRefund",
+    "name": "NothingToWithdraw",
     "inputs": [
       {
         "name": "splitId",
         "type": "uint256",
         "internalType": "uint256"
-      },
-      {
-        "name": "participant",
-        "type": "address",
-        "internalType": "address"
       }
     ]
   },
   {
     "type": "error",
-    "name": "NothingToWithdraw",
+    "name": "PaymentsAlreadyStarted",
     "inputs": [
       {
         "name": "splitId",
@@ -1096,17 +1025,6 @@ export const payFrensSplitterAbi = [
   {
     "type": "error",
     "name": "SplitDoesNotExist",
-    "inputs": [
-      {
-        "name": "splitId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "SplitNotCancelled",
     "inputs": [
       {
         "name": "splitId",

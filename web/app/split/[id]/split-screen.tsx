@@ -18,7 +18,7 @@ import {formatUsdc, relativeTime} from "@/lib/format";
 import {useMiniAppReady} from "@/lib/hooks/use-mini-app";
 import {useProfiles} from "@/lib/hooks/use-profiles";
 import {usePayShare} from "@/lib/hooks/use-pay-share";
-import {useCancelSplit, useClaimRefund, useWithdraw} from "@/lib/hooks/use-split-actions";
+import {useCancelSplit, useWithdraw} from "@/lib/hooks/use-split-actions";
 import {useSplit, useWithdrawalQuote} from "@/lib/hooks/use-splits";
 import {
   isFullyPaid,
@@ -44,15 +44,14 @@ export function SplitScreen({id}: {id: string}) {
   const {net, fee} = useWithdrawalQuote(splitId);
   const withdrawal = useWithdraw(splitId);
   const cancellation = useCancelSplit(splitId);
-  const refund = useClaimRefund(splitId);
 
   // Any successful write invalidates what is on screen, so pull fresh state
   // rather than leaving a stale "you owe" under a completed transaction.
   useEffect(() => {
-    if (pay.isSuccess || withdrawal.isSuccess || cancellation.isSuccess || refund.isSuccess) {
+    if (pay.isSuccess || withdrawal.isSuccess || cancellation.isSuccess) {
       void refetch();
     }
-  }, [pay.isSuccess, withdrawal.isSuccess, cancellation.isSuccess, refund.isSuccess, refetch]);
+  }, [pay.isSuccess, withdrawal.isSuccess, cancellation.isSuccess, refetch]);
 
   // Derived rather than closed by an effect: a successful withdrawal dismisses
   // the sheet on the next render, with no extra state round-trip.
@@ -120,14 +119,14 @@ export function SplitScreen({id}: {id: string}) {
 
           <p className="mt-2 text-xs text-content-muted">
             {cancelled
-              ? "Everyone who paid can claim a full refund."
+              ? "Cancelled before anyone paid."
               : complete
                 ? "Everyone has paid."
                 : `${formatUsdc(outstanding(split))} still outstanding.`}
           </p>
         </div>
 
-        {/* Moot once cancelled — nothing gets withdrawn, only refunded. */}
+        {/* Moot once cancelled — nobody has paid in, so nothing to withdraw. */}
         {!cancelled && (
           <WithdrawalPolicy
             allowPartial={split.allowPartialWithdraw}
@@ -141,15 +140,23 @@ export function SplitScreen({id}: {id: string}) {
         </h2>
         <ParticipantList split={split} profiles={profiles} viewer={address} />
 
-        {role === "creator-awaiting" && !cancelled && (
-          <button
-            type="button"
-            onClick={() => void cancellation.cancel()}
-            disabled={cancellation.isPending}
-            className="mt-4 w-full py-2 text-xs font-medium text-content-subtle transition-colors hover:text-danger disabled:opacity-50"
-          >
-            {cancellation.isPending ? "Cancelling…" : "Cancel this split and refund everyone"}
-          </button>
+        {/* Cancellation only ever succeeds before anyone has paid — once one
+            share lands, this option has to disappear rather than let the
+            creator hit a revert. */}
+        {role === "creator-awaiting" && !cancelled && split.amountPaid === 0n && (
+          <div className="mt-4">
+            {cancellation.error && (
+              <p className="mb-2 text-center text-xs text-danger">{friendlyError(cancellation.error)}</p>
+            )}
+            <button
+              type="button"
+              onClick={() => void cancellation.cancel()}
+              disabled={cancellation.isPending}
+              className="w-full py-2 text-xs font-medium text-content-subtle transition-colors hover:text-danger disabled:opacity-50"
+            >
+              {cancellation.isPending ? "Cancelling…" : "Cancel this split"}
+            </button>
+          </div>
         )}
 
         {(complete || cancelled) && (
@@ -171,7 +178,7 @@ export function SplitScreen({id}: {id: string}) {
           available={available}
           allowPartial={split.allowPartialWithdraw}
           pay={pay}
-          refund={refund}
+          cancelled={cancelled}
           onWithdraw={() => setWithdrawRequested(true)}
         />
       </div>
@@ -196,7 +203,7 @@ function Action({
   available,
   allowPartial,
   pay,
-  refund,
+  cancelled,
   onWithdraw,
 }: {
   role: ReturnType<typeof viewerRole>;
@@ -204,7 +211,7 @@ function Action({
   available: bigint;
   allowPartial: boolean;
   pay: ReturnType<typeof usePayShare>;
-  refund: ReturnType<typeof useClaimRefund>;
+  cancelled: boolean;
   onWithdraw: () => void;
 }) {
   switch (role) {
@@ -256,27 +263,10 @@ function Action({
         </Button>
       );
 
-    case "refundable":
-      return (
-        <div>
-          {refund.error && (
-            <p className="mb-2 text-center text-xs text-danger">{friendlyError(refund.error)}</p>
-          )}
-          <Button
-            size="lg"
-            fullWidth
-            onClick={() => void refund.claim()}
-            loading={refund.isPending}
-          >
-            Claim refund · {formatUsdc(share ?? 0n)}
-          </Button>
-        </div>
-      );
-
     default:
       return (
         <p className="py-3 text-center text-sm text-content-muted">
-          You&apos;re not part of this split.
+          {cancelled ? "Cancelled before anyone paid." : "You're not part of this split."}
         </p>
       );
   }

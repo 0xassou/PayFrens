@@ -162,29 +162,3 @@ export function useCancelSplit(splitId?: bigint) {
 
   return {cancel, error: action.error, isPending: action.isPending, isSuccess: action.isSuccess};
 }
-
-export function useClaimRefund(splitId?: bigint) {
-  const action = useContractAction();
-
-  const claim = useCallback(async () => {
-    if (splitId === undefined) return;
-    action.setError(null);
-
-    try {
-      const hash = await action.writeContractAsync({
-        address: splitterAddress(),
-        abi: payFrensSplitterAbi,
-        functionName: "claimRefund",
-        args: [splitId],
-        chainId: ACTIVE_CHAIN_ID,
-      });
-      action.setHash(hash);
-      return hash;
-    } catch (cause) {
-      action.setError(cause as Error);
-      throw cause;
-    }
-  }, [action, splitId]);
-
-  return {claim, error: action.error, isPending: action.isPending, isSuccess: action.isSuccess};
-}

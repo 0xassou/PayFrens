@@ -29,8 +29,10 @@ import {SafeERC20} from "./libraries/SafeERC20.sol";
 ///   people paying a bill never lose a cent to the protocol — the person
 ///   collecting does.
 ///
-/// - **Refunds are fee-free.** If a split is cancelled, participants get back
-///   exactly what they put in.
+/// - **Cancellation only exists before money is on the line.** `cancel` reverts
+///   the moment a single share has been paid — at that point the split must run
+///   its course, so there is no refund path to reason about or keep in sync
+///   with the payment/withdrawal accounting.
 contract PayFrensSplitter {
     using SafeERC20 for IERC20;
 
@@ -44,7 +46,7 @@ contract PayFrensSplitter {
         None,
         /// @dev Accepting payments.
         Open,
-        /// @dev Creator called `cancel`. No more payments; refunds are open.
+        /// @dev Creator called `cancel` before anyone paid. No more payments.
         Cancelled
     }
 
@@ -65,7 +67,6 @@ contract PayFrensSplitter {
         /// @dev Non-zero share doubles as "this address is in the split".
         uint96 share;
         bool paid;
-        bool refunded;
     }
 
     /// @notice Flattened view of a split, for the UI and for subgraph-less reads.
@@ -160,9 +161,7 @@ contract PayFrensSplitter {
 
     event Withdrawn(uint256 indexed splitId, address indexed creator, uint256 netAmount, uint256 feeAmount);
 
-    event SplitCancelled(uint256 indexed splitId, uint256 amountRefundable);
-
-    event RefundClaimed(uint256 indexed splitId, address indexed participant, uint256 amount);
+    event SplitCancelled(uint256 indexed splitId);
 
     event TreasuryUpdated(address indexed previousTreasury, address indexed newTreasury);
 
@@ -186,14 +185,12 @@ contract PayFrensSplitter {
     error TitleTooLong();
     error SplitDoesNotExist(uint256 splitId);
     error SplitNotOpen(uint256 splitId);
-    error SplitNotCancelled(uint256 splitId);
     error NotCreator(uint256 splitId);
     error NotParticipant(uint256 splitId, address account);
     error AlreadyPaid(uint256 splitId, address participant);
     error NotFullyPaid(uint256 splitId, uint256 amountPaid, uint256 totalAmount);
     error NothingToWithdraw(uint256 splitId);
-    error AlreadyWithdrawn(uint256 splitId);
-    error NothingToRefund(uint256 splitId, address participant);
+    error PaymentsAlreadyStarted(uint256 splitId);
     error Reentrancy();
 
     /*//////////////////////////////////////////////////////////////
@@ -352,8 +349,8 @@ contract PayFrensSplitter {
     }
 
     /// @notice Pay someone else's share — "I'll spot you". The USDC comes out of
-    ///         `msg.sender`, and the share is credited to `participant`, who is
-    ///         the one entitled to a refund if the split is later cancelled.
+    ///         `msg.sender`; the share is credited to `participant`, who is the
+    ///         one recorded as having paid.
     function payFor(uint256 splitId, address participant) external {
         _pay(splitId, participant);
     }
@@ -440,46 +437,24 @@ contract PayFrensSplitter {
     }
 
     /*//////////////////////////////////////////////////////////////
-                           CANCELLING & REFUNDS
+                                CANCELLING
     //////////////////////////////////////////////////////////////*/
 
-    /// @notice Creator calls off a split. Payments stop; everyone who already
-    ///         paid can claim a full, fee-free refund.
-    /// @dev Only possible while nothing has been withdrawn — once the creator
-    ///      has taken money out, the split is settled and cannot be unwound.
+    /// @notice Creator calls off a split before anyone has paid into it.
+    /// @dev Only possible while `amountPaid == 0`. The instant one participant
+    ///      pays, the split has to run its course — the rest pay their share
+    ///      normally, and there is no refund path back out for the person who
+    ///      already paid.
     function cancel(uint256 splitId) external {
         Split storage split = _splits[splitId];
         _requireExists(split, splitId);
         if (msg.sender != split.creator) revert NotCreator(splitId);
         if (split.status != SplitStatus.Open) revert SplitNotOpen(splitId);
-        if (split.amountWithdrawn != 0) revert AlreadyWithdrawn(splitId);
+        if (split.amountPaid != 0) revert PaymentsAlreadyStarted(splitId);
 
         split.status = SplitStatus.Cancelled;
 
-        emit SplitCancelled(splitId, split.amountPaid);
-    }
-
-    /// @notice Take back what you paid into a cancelled split.
-    function claimRefund(uint256 splitId) external nonReentrant returns (uint256 amount) {
-        Split storage split = _splits[splitId];
-        _requireExists(split, splitId);
-        if (split.status != SplitStatus.Cancelled) revert SplitNotCancelled(splitId);
-
-        Participant storage entry = _participants[splitId][msg.sender];
-        if (entry.share == 0) revert NotParticipant(splitId, msg.sender);
-        if (!entry.paid || entry.refunded) revert NothingToRefund(splitId, msg.sender);
-
-        entry.refunded = true;
-        amount = entry.share;
-
-        // `amount` was read out of a uint96 field, so it round-trips exactly.
-        // forge-lint: disable-next-line(unsafe-typecast)
-        split.amountPaid -= uint96(amount);
-        split.paidCount -= 1;
-
-        token.safeTransfer(msg.sender, amount);
-
-        emit RefundClaimed(splitId, msg.sender, amount);
+        emit SplitCancelled(splitId);
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -539,13 +514,9 @@ contract PayFrensSplitter {
         return _participantList[splitId];
     }
 
-    function getParticipant(uint256 splitId, address account)
-        external
-        view
-        returns (uint256 share, bool paid, bool refunded)
-    {
+    function getParticipant(uint256 splitId, address account) external view returns (uint256 share, bool paid) {
         Participant storage entry = _participants[splitId][account];
-        return (entry.share, entry.paid, entry.refunded);
+        return (entry.share, entry.paid);
     }
 
     /// @notice True when every participant has paid.

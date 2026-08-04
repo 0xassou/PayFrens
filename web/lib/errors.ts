@@ -42,13 +42,12 @@ export function friendlyError(error: Error, fallback = "Something went wrong. Pl
   if (/ZeroShare/i.test(text)) return "Everyone needs a share above zero.";
   if (/LengthMismatch/i.test(text)) return "Participants and shares don't line up.";
   if (/AlreadyPaid/i.test(text)) return "That share is already paid.";
-  if (/AlreadyWithdrawn/i.test(text)) return "This split has already been withdrawn.";
+  if (/PaymentsAlreadyStarted/i.test(text)) return "Someone already paid — this split can't be cancelled now.";
   if (/NotFullyPaid/i.test(text)) return "Not everyone has paid yet.";
   if (/NotParticipant/i.test(text)) return "You're not part of this split.";
   if (/NotCreator/i.test(text)) return "Only the person who created this split can do that.";
   if (/SplitNotOpen/i.test(text)) return "This split is closed.";
   if (/NothingToWithdraw/i.test(text)) return "There's nothing to withdraw yet.";
-  if (/NothingToRefund/i.test(text)) return "There's nothing to refund.";
 
   // ERC-20 balance and allowance, which read as generic "insufficient" strings.
   if (/transfer amount exceeds balance|insufficient balance/i.test(text)) {
