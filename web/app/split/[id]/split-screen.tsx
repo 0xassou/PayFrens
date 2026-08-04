@@ -12,7 +12,7 @@ import {Badge} from "@/components/ui/badge";
 import {Button} from "@/components/ui/button";
 import {ProgressBar} from "@/components/ui/progress-bar";
 import {Spinner} from "@/components/ui/spinner";
-import {APP_URL} from "@/lib/env";
+import {splitUrl} from "@/lib/env";
 import {friendlyError, reportError} from "@/lib/errors";
 import {formatUsdc, relativeTime} from "@/lib/format";
 import {useMiniAppReady} from "@/lib/hooks/use-mini-app";
@@ -299,7 +299,7 @@ function ShareButton({splitId, title}: {splitId: string; title: string}) {
   }, [error]);
 
   const handleShare = async () => {
-    const url = `${APP_URL}/split/${splitId}`;
+    const url = splitUrl(splitId);
     const text = title
       ? `Splitting ${title} on PayFrens — grab your share 👇`
       : "Split this with me on PayFrens 👇";

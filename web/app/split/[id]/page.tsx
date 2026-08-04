@@ -1,6 +1,6 @@
 import type {Metadata} from "next";
 import {formatUsdc} from "@/lib/format";
-import {APP_NAME, absoluteUrl} from "@/lib/env";
+import {APP_NAME, absoluteUrl, splitUrl} from "@/lib/env";
 import {readSplit} from "@/lib/server/client";
 import {isFullyPaid, SplitStatus} from "@/lib/splits";
 import {SplitScreen} from "./split-screen";
@@ -27,7 +27,7 @@ export async function generateMetadata({params}: Props): Promise<Metadata> {
   }
 
   const title = split?.title || `Split #${id}`;
-  const url = absoluteUrl(`/split/${id}`);
+  const url = splitUrl(id);
 
   const description = split
     ? split.status === SplitStatus.Cancelled

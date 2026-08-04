@@ -42,3 +42,12 @@ export const ONCHAINKIT_API_KEY = process.env.NEXT_PUBLIC_ONCHAINKIT_API_KEY;
 export function absoluteUrl(path: string): string {
   return `${APP_URL}${path.startsWith("/") ? path : `/${path}`}`;
 }
+
+/**
+ * The one place a split's shareable link gets built, so a split's id can
+ * never end up concatenated with anything else (title, share-message text)
+ * on its way into a URL.
+ */
+export function splitUrl(id: string | number | bigint): string {
+  return absoluteUrl(`/split/${encodeURIComponent(String(id))}`);
+}
