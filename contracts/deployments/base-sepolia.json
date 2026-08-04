@@ -2,10 +2,10 @@
   "network": "base-sepolia",
   "chainId": 84532,
   "contract": "PayFrensSplitter",
-  "address": "0x61966a27d3a308A225ae2Faa20382B2A5Fa57A3E",
-  "transactionHash": "0x265335e94d96599ec715eb46f5342ce6860b2b5868e9da5e0c16304bfe181525",
-  "blockNumber": 44778973,
-  "deployer": "0xE8758f5c2d3fB6677BD0a6e9982B2f1d8D37CD77",
+  "address": "0x906a12f301B3D380ce0600d59b5F100FCf0DBE01",
+  "transactionHash": "0x1d469499847c19f1050b3e1f23fb3b299eacb6ac114c1951f1054e8751f14310",
+  "blockNumber": 45046731,
+  "deployer": "0x7E10787EC0602E9442c0487944b9d758a1b9d4Dc",
   "constructorArgs": {
     "token": "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
     "treasury": "0x6B661614e175A9Eb166F08F8a8F46abD83C06584"
@@ -24,13 +24,16 @@
     "viaIR": false,
     "bytecodeHash": "none"
   },
-  "gasUsed": 3138729,
-  "explorer": "https://sepolia.basescan.org/address/0x61966a27d3a308A225ae2Faa20382B2A5Fa57A3E",
+  "gasUsed": 2951919,
+  "explorer": "https://sepolia.basescan.org/address/0x906a12f301B3D380ce0600d59b5F100FCf0DBE01",
   "verifiedOnExplorer": false,
-  "deployedAt": "2026-07-29T07:41:00Z",
+  "deployedAt": "2026-08-04T16:43:02Z",
+  "supersedes": "0x61966a27d3a308A225ae2Faa20382B2A5Fa57A3E",
   "notes": [
-    "Deployer is a throwaway burner funded from a faucet; it holds no privileges on the contract.",
+    "Redeployed to change on-chain behaviour: cancel() now reverts once any participant has paid (PaymentsAlreadyStarted), instead of the old 'only before withdrawal' rule. claimRefund() and the whole refund mechanism were removed since cancellation and a nonzero amountPaid can no longer coexist.",
+    "Splits created against the previous address (0x61966a27d3a308A225ae2Faa20382B2A5Fa57A3E) keep the old cancel-any-time-before-withdrawal behaviour forever — that bytecode is immutable and this deployment does not migrate them.",
+    "Deployer is a throwaway burner funded from a faucet; it holds no privileges on the contract (owner/treasury is set to 0x6B661614e175A9Eb166F08F8a8F46abD83C06584 directly).",
     "Basescan verification still pending — no BASESCAN_API_KEY available at deploy time.",
-    "Deployed runtime bytecode matches a local `forge build` exactly once the immutable `token` address is injected into its 5 slots."
+    "Deployed runtime bytecode matches a local `forge build` exactly once the immutable `token` address is injected into its slots; contract size is 13,136 bytes (down from the prior deployment, since claimRefund and its supporting code were removed)."
   ]
 }

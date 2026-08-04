@@ -22,7 +22,7 @@ export const USDC_ADDRESS: Record<SupportedChainId, Address> = {
 const DEPLOYED_SPLITTER: Record<SupportedChainId, Address | undefined> = {
   // Not deployed to mainnet yet.
   [BASE_ID]: undefined,
-  [BASE_SEPOLIA_ID]: "0x61966a27d3a308A225ae2Faa20382B2A5Fa57A3E",
+  [BASE_SEPOLIA_ID]: "0x906a12f301B3D380ce0600d59b5F100FCf0DBE01",
 };
 
 /** Treats an unset *or* empty env var as absent, so a blank Vercel field falls back. */
