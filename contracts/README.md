@@ -47,10 +47,11 @@ in full. With it on, the creator can pull whatever has arrived so far, which
 suits open-ended collections like a group gift where a straggler may never pay.
 Either way the fee maths is identical and is applied to each withdrawal.
 
-**Refunds.** A creator can `cancel()` a split that has not been withdrawn from.
-Cancelling stops further payments and lets each participant who already paid
-call `claimRefund()` to take their money back, in full, with no fee. This is the
-escape hatch for a split that will never complete.
+**Cancellation.** A creator can `cancel()` a split, but only before anyone has
+paid into it — the moment `amountPaid` is nonzero, `cancel` reverts. This is the
+escape hatch for a split that should never have been created, not a way to
+unwind one that is already underway: once a single share has landed, the rest
+of the group pays normally and there is no refund path back out.
 
 ## Deployment
 
