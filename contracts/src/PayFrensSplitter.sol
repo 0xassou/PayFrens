@@ -41,9 +41,10 @@ import {SafeERC20} from "./libraries/SafeERC20.sol";
 ///
 /// - **An edit can move a share, so payers state what they expect.** Because a
 ///   creator can raise someone's share right up until the first payment lands,
-///   `pay` alone would let a share change under a participant who has already
-///   approved USDC. `payExact` refuses to pay anything other than the amount
-///   the caller names, and is what the mini-app uses.
+///   an unguarded "pay whatever I owe" would let the amount change under a
+///   participant who has already approved USDC. So there is no such entry
+///   point: `payExact` and `payForExact` are the only ways to pay, and both
+///   revert unless the share is still the number the caller named.
 contract PayFrensSplitter {
     using SafeERC20 for IERC20;
 
@@ -414,9 +415,8 @@ contract PayFrensSplitter {
     ///      dropped from it stops being a participant immediately and can no
     ///      longer pay.
     ///
-    ///      Note for callers that pay: an edit can move what an address owes, so
-    ///      settle with `payExact` rather than `pay` if you care that the amount
-    ///      you approved is the amount you are charged.
+    ///      An edit can move what an address owes, which is why paying goes
+    ///      through `payExact` and names the amount.
     function editSplit(
         uint256 splitId,
         string calldata title,
@@ -514,41 +514,26 @@ contract PayFrensSplitter {
                                  PAYING
     //////////////////////////////////////////////////////////////*/
 
-    /// @notice Pay your own share, whatever it currently is.
-    /// @dev Requires a prior USDC approval to this contract.
-    ///
-    ///      Pays the share as it stands when the transaction executes, which is
-    ///      not necessarily the one you saw when you signed: the creator can
-    ///      raise it with `editSplit` right up until the first payment lands,
-    ///      and the mini-app approves `type(uint256).max` once rather than the
-    ///      exact amount each time, so the allowance will not stop a larger
-    ///      charge. Use `payExact` unless you genuinely mean "whatever I owe".
-    function pay(uint256 splitId) external {
-        _pay(splitId, msg.sender);
-    }
-
-    /// @notice Pay your own share, but only if it is still `expectedShare`.
-    /// @dev The one-tap path in the mini-app. Reverts with `ShareChanged` if an
-    ///      edit moved the amount between the screen the payer read and the
-    ///      block their transaction landed in, so a creator can never turn an
-    ///      existing USDC allowance into a larger payment than the one the payer
-    ///      agreed to. The check and the transfer are the same transaction —
-    ///      nothing can slip between them.
+    /// @notice Pay your own share, which must still be `expectedShare`.
+    /// @dev The one-tap path in the mini-app, and the only way into this
+    ///      contract's payment path — there is deliberately no unguarded `pay`.
+    ///      Naming the amount is not a convenience: `editSplit` lets the creator
+    ///      raise a share right up until the first payment lands, and clients
+    ///      approve USDC to this registry once and unlimited rather than per
+    ///      payment, so an allowance would not stop a larger charge. Reverts
+    ///      with `ShareChanged` if the amount moved between the screen the payer
+    ///      read and the block their transaction landed in. The check and the
+    ///      transfer are the same transaction — nothing can slip between them.
     /// @param expectedShare Amount, in USDC base units, the caller means to pay.
     function payExact(uint256 splitId, uint96 expectedShare) external {
         _requireShare(splitId, msg.sender, expectedShare);
         _pay(splitId, msg.sender);
     }
 
-    /// @notice Pay someone else's share — "I'll spot you". The USDC comes out of
+    /// @notice Spot someone — "I'll get yours". The USDC comes out of
     ///         `msg.sender`; the share is credited to `participant`, who is the
-    ///         one recorded as having paid.
-    /// @dev Carries the same caveat as `pay`; `payForExact` is the guarded form.
-    function payFor(uint256 splitId, address participant) external {
-        _pay(splitId, participant);
-    }
-
-    /// @notice Spot someone, for no more than `expectedShare`.
+    ///         one recorded as having paid. Same guard as `payExact`, applied to
+    ///         the share being settled.
     function payForExact(uint256 splitId, address participant, uint96 expectedShare) external {
         _requireShare(splitId, participant, expectedShare);
         _pay(splitId, participant);

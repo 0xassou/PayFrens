@@ -80,11 +80,21 @@ contract PayFrensSplitterTest is Test {
         id = splitter.createEvenSplit("Dinner", _trio(), 30 * ONE, false);
     }
 
+    /// @dev Settles `who`'s share at whatever it currently is.
+    ///
+    ///      Paying means naming the amount — `payExact` is the only entry point
+    ///      — but most of these tests are not about that number, they just need
+    ///      the share paid. The ones that *are* about it name it literally.
+    function _settle(uint256 id, address who) internal {
+        (uint256 share,) = splitter.getParticipant(id, who);
+        vm.prank(who);
+        splitter.payExact(id, uint96(share));
+    }
+
     function _payAll(uint256 id) internal {
         address[] memory p = _trio();
         for (uint256 i; i < p.length; ++i) {
-            vm.prank(p[i]);
-            splitter.pay(id);
+            _settle(id, p[i]);
         }
     }
 
@@ -229,8 +239,7 @@ contract PayFrensSplitterTest is Test {
 
         assertEq(splitter.amountOwed(id, creator), 10 * ONE);
 
-        vm.prank(creator);
-        splitter.pay(id);
+        _settle(id, creator);
 
         (, bool paid) = splitter.getParticipant(id, creator);
         assertTrue(paid);
@@ -385,8 +394,7 @@ contract PayFrensSplitterTest is Test {
 
         uint256 aliceBefore = usdc.balanceOf(alice);
 
-        vm.prank(alice);
-        splitter.pay(id);
+        _settle(id, alice);
 
         // The participant is debited their share and not a base unit more —
         // the protocol fee never touches the people paying.
@@ -410,22 +418,20 @@ contract PayFrensSplitterTest is Test {
         emit SharePaid(id, alice, alice, 10 * ONE, 1, 3);
 
         vm.prank(alice);
-        splitter.pay(id);
+        splitter.payExact(id, 10 * ONE);
     }
 
     function test_Pay_EmitsSplitFundedOnTheLastShare() public {
         uint256 id = _createEven30();
 
-        vm.prank(alice);
-        splitter.pay(id);
-        vm.prank(bob);
-        splitter.pay(id);
+        _settle(id, alice);
+        _settle(id, bob);
 
         vm.expectEmit(true, false, false, true);
         emit SplitFunded(id, 30 * ONE);
 
         vm.prank(carol);
-        splitter.pay(id);
+        splitter.payExact(id, 10 * ONE);
 
         assertTrue(splitter.isFullyPaid(id));
     }
@@ -433,10 +439,8 @@ contract PayFrensSplitterTest is Test {
     function test_Pay_DoesNotReportFundedEarly() public {
         uint256 id = _createEven30();
 
-        vm.prank(alice);
-        splitter.pay(id);
-        vm.prank(bob);
-        splitter.pay(id);
+        _settle(id, alice);
+        _settle(id, bob);
 
         // Two of three: still short, so the "everyone has paid" push must not
         // fire and the creator must not be able to withdraw.
@@ -455,7 +459,7 @@ contract PayFrensSplitterTest is Test {
         emit SharePaid(id, bob, creator, 10 * ONE, 1, 3);
 
         vm.prank(creator);
-        splitter.payFor(id, bob);
+        splitter.payForExact(id, bob, 10 * ONE);
 
         assertEq(usdc.balanceOf(creator), creatorBefore - 10 * ONE);
         assertEq(usdc.balanceOf(bob), bobBefore, "spotted friend pays nothing");
@@ -471,45 +475,51 @@ contract PayFrensSplitterTest is Test {
     function test_Pay_RevertsOnDoublePayment() public {
         uint256 id = _createEven30();
 
-        vm.prank(alice);
-        splitter.pay(id);
+        _settle(id, alice);
 
         vm.expectRevert(abi.encodeWithSelector(PayFrensSplitter.AlreadyPaid.selector, id, alice));
         vm.prank(alice);
-        splitter.pay(id);
+        splitter.payExact(id, 10 * ONE);
     }
 
     function test_PayFor_RevertsWhenTheShareIsAlreadySettled() public {
         uint256 id = _createEven30();
 
-        vm.prank(alice);
-        splitter.pay(id);
+        _settle(id, alice);
 
         vm.expectRevert(abi.encodeWithSelector(PayFrensSplitter.AlreadyPaid.selector, id, alice));
         vm.prank(creator);
-        splitter.payFor(id, alice);
+        splitter.payForExact(id, alice, 10 * ONE);
     }
 
-    function test_Pay_RevertsForAnAddressNotInTheSplit() public {
+    /// @dev With no unguarded entry point left, the share check is what an
+    ///      outsider hits first: they are owed nothing, so any amount they name
+    ///      disagrees with the zero on chain. `NotParticipant` is still reachable
+    ///      underneath it — see the zero-expectation test below.
+    function test_PayExact_RevertsForAnAddressNotInTheSplit() public {
         uint256 id = _createEven30();
 
-        vm.expectRevert(abi.encodeWithSelector(PayFrensSplitter.NotParticipant.selector, id, stranger));
+        vm.expectRevert(
+            abi.encodeWithSelector(PayFrensSplitter.ShareChanged.selector, id, stranger, 10 * ONE, 0)
+        );
         vm.prank(stranger);
-        splitter.pay(id);
+        splitter.payExact(id, 10 * ONE);
     }
 
-    function test_PayFor_RevertsForAnAddressNotInTheSplit() public {
+    function test_PayForExact_RevertsForAnAddressNotInTheSplit() public {
         uint256 id = _createEven30();
 
         vm.expectRevert(abi.encodeWithSelector(PayFrensSplitter.NotParticipant.selector, id, stranger));
         vm.prank(creator);
-        splitter.payFor(id, stranger);
+        splitter.payForExact(id, stranger, 0);
     }
 
-    function test_Pay_RevertsForAnUnknownSplitId() public {
+    /// @dev Naming zero is what gets past the share guard on a split that does
+    ///      not exist, since every share on it reads as zero.
+    function test_PayExact_RevertsForAnUnknownSplitId() public {
         vm.expectRevert(abi.encodeWithSelector(PayFrensSplitter.SplitDoesNotExist.selector, 42));
         vm.prank(alice);
-        splitter.pay(42);
+        splitter.payExact(42, 0);
     }
 
     function test_Pay_RevertsAfterCancellation() public {
@@ -520,7 +530,7 @@ contract PayFrensSplitterTest is Test {
 
         vm.expectRevert(abi.encodeWithSelector(PayFrensSplitter.SplitNotOpen.selector, id));
         vm.prank(alice);
-        splitter.pay(id);
+        splitter.payExact(id, 10 * ONE);
     }
 
     function test_Pay_RevertsWithoutAllowance() public {
@@ -531,7 +541,7 @@ contract PayFrensSplitterTest is Test {
 
         vm.expectRevert(SafeERC20.TransferFromFailed.selector);
         vm.prank(alice);
-        splitter.pay(id);
+        splitter.payExact(id, 10 * ONE);
     }
 
     function test_Pay_RevertsWithoutBalance() public {
@@ -547,7 +557,7 @@ contract PayFrensSplitterTest is Test {
 
         vm.expectRevert(SafeERC20.TransferFromFailed.selector);
         vm.prank(broke);
-        splitter.pay(id);
+        splitter.payExact(id, 10 * ONE);
     }
 
     /// @dev A failed payment must leave no trace — the `paid` flag has to roll
@@ -559,7 +569,7 @@ contract PayFrensSplitterTest is Test {
         usdc.approve(address(splitter), 0);
 
         vm.prank(alice);
-        try splitter.pay(id) {
+        try splitter.payExact(id, 10 * ONE) {
             revert("expected revert");
         } catch {}
 
@@ -576,8 +586,7 @@ contract PayFrensSplitterTest is Test {
         vm.prank(creator);
         uint256 second = splitter.createEvenSplit("Drinks", _trio(), 60 * ONE, false);
 
-        vm.prank(alice);
-        splitter.pay(first);
+        _settle(first, alice);
 
         assertEq(splitter.amountOwed(first, alice), 0);
         assertEq(splitter.amountOwed(second, alice), 20 * ONE);
@@ -657,8 +666,7 @@ contract PayFrensSplitterTest is Test {
     function test_Withdraw_RevertsBeforeEveryoneHasPaid() public {
         uint256 id = _createEven30();
 
-        vm.prank(alice);
-        splitter.pay(id);
+        _settle(id, alice);
 
         vm.expectRevert(
             abi.encodeWithSelector(PayFrensSplitter.NotFullyPaid.selector, id, 10 * ONE, 30 * ONE)
@@ -724,8 +732,7 @@ contract PayFrensSplitterTest is Test {
         vm.prank(creator);
         uint256 id = splitter.createEvenSplit("Group gift", _trio(), 30 * ONE, true);
 
-        vm.prank(alice);
-        splitter.pay(id);
+        _settle(id, alice);
 
         uint256 creatorBefore = usdc.balanceOf(creator);
 
@@ -744,15 +751,12 @@ contract PayFrensSplitterTest is Test {
         vm.prank(creator);
         uint256 id = splitter.createEvenSplit("Group gift", _trio(), 30 * ONE, true);
 
-        vm.prank(alice);
-        splitter.pay(id);
+        _settle(id, alice);
         vm.prank(creator);
         splitter.withdraw(id);
 
-        vm.prank(bob);
-        splitter.pay(id);
-        vm.prank(carol);
-        splitter.pay(id);
+        _settle(id, bob);
+        _settle(id, carol);
 
         vm.prank(creator);
         (uint256 net, uint256 fee) = splitter.withdraw(id);
@@ -769,8 +773,7 @@ contract PayFrensSplitterTest is Test {
         vm.prank(creator);
         uint256 id = splitter.createEvenSplit("Group gift", _trio(), 30 * ONE, true);
 
-        vm.prank(alice);
-        splitter.pay(id);
+        _settle(id, alice);
         vm.prank(creator);
         splitter.withdraw(id);
 
@@ -821,8 +824,7 @@ contract PayFrensSplitterTest is Test {
     function test_Cancel_RevertsOnceSomeoneHasPaid() public {
         uint256 id = _createEven30();
 
-        vm.prank(alice);
-        splitter.pay(id);
+        _settle(id, alice);
 
         vm.expectRevert(abi.encodeWithSelector(PayFrensSplitter.PaymentsAlreadyStarted.selector, id));
         vm.prank(creator);
@@ -835,7 +837,7 @@ contract PayFrensSplitterTest is Test {
         uint256 id = _createEven30();
 
         vm.prank(alice);
-        splitter.payFor(id, bob);
+        splitter.payForExact(id, bob, 10 * ONE);
 
         vm.expectRevert(abi.encodeWithSelector(PayFrensSplitter.PaymentsAlreadyStarted.selector, id));
         vm.prank(creator);
@@ -848,8 +850,7 @@ contract PayFrensSplitterTest is Test {
         vm.prank(creator);
         uint256 id = splitter.createEvenSplit("Gift", _trio(), 30 * ONE, true);
 
-        vm.prank(alice);
-        splitter.pay(id);
+        _settle(id, alice);
         vm.prank(creator);
         splitter.withdraw(id);
 
@@ -956,8 +957,11 @@ contract PayFrensSplitterTest is Test {
     //////////////////////////////////////////////////////////////*/
 
     /// @dev The whole point of clearing the old roster: membership lives in the
-    ///      per-address mapping, which `pay` is the only thing that reads. Leave
-    ///      a stale entry behind and a removed participant keeps paying in.
+    ///      per-address mapping, which the payment path is the only thing that
+    ///      reads. Leave a stale entry behind and a removed participant keeps
+    ///      paying in. Named at zero here to test membership rather than the
+    ///      share guard, which `test_PayExact_RefusesAParticipantWhoWasRemoved`
+    ///      covers from the other side.
     function test_Edit_RemovedParticipantCanNoLongerPay() public {
         uint256 id = _createEven30();
 
@@ -966,7 +970,7 @@ contract PayFrensSplitterTest is Test {
 
         vm.expectRevert(abi.encodeWithSelector(PayFrensSplitter.NotParticipant.selector, id, alice));
         vm.prank(alice);
-        splitter.pay(id);
+        splitter.payExact(id, 0);
 
         assertEq(splitter.amountOwed(id, alice), 0);
         (uint256 share, bool paid) = splitter.getParticipant(id, alice);
@@ -974,7 +978,7 @@ contract PayFrensSplitterTest is Test {
         assertFalse(paid);
     }
 
-    /// @dev Nor can anyone spot them — `payFor` reads the same mapping.
+    /// @dev Nor can anyone spot them — `payForExact` reads the same mapping.
     function test_Edit_NobodyCanPayForARemovedParticipant() public {
         uint256 id = _createEven30();
 
@@ -983,7 +987,7 @@ contract PayFrensSplitterTest is Test {
 
         vm.expectRevert(abi.encodeWithSelector(PayFrensSplitter.NotParticipant.selector, id, alice));
         vm.prank(bob);
-        splitter.payFor(id, alice);
+        splitter.payForExact(id, alice, 0);
     }
 
     /// @dev The trap in the other direction: a non-zero share doubles as the
@@ -1138,8 +1142,7 @@ contract PayFrensSplitterTest is Test {
     function test_Edit_RevertsOnceSomeoneHasPaid() public {
         uint256 id = _createEven30();
 
-        vm.prank(alice);
-        splitter.pay(id);
+        _settle(id, alice);
 
         vm.expectRevert(abi.encodeWithSelector(PayFrensSplitter.PaymentsAlreadyStarted.selector, id));
         vm.prank(creator);
@@ -1150,7 +1153,7 @@ contract PayFrensSplitterTest is Test {
         uint256 id = _createEven30();
 
         vm.prank(alice);
-        splitter.payFor(id, bob);
+        splitter.payForExact(id, bob, 10 * ONE);
 
         vm.expectRevert(abi.encodeWithSelector(PayFrensSplitter.PaymentsAlreadyStarted.selector, id));
         vm.prank(creator);
@@ -1295,17 +1298,18 @@ contract PayFrensSplitterTest is Test {
         assertEq(usdc.balanceOf(address(splitter)), 0);
     }
 
-    /// @dev The same edit against plain `pay`, which takes whatever the share
-    ///      says at execution time. Documented here so the difference between
-    ///      the two entry points is a test, not a claim in a comment.
-    function test_Pay_TakesTheRaisedShareWithoutAsking() public {
+    /// @dev The other half of that story. The raised share is payable — but
+    ///      only by naming it. There is no entry point that takes it unread,
+    ///      which is the whole guarantee, stated as a test rather than a claim
+    ///      in a comment.
+    function test_PayExact_ChargesTheRaisedShareOnlyWhenNamed() public {
         uint256 id = _createEven30();
 
         vm.prank(creator);
         splitter.editSplit(id, "Dinner", _pair(alice, bob), _shares(900 * ONE, ONE), false);
 
         vm.prank(alice);
-        splitter.pay(id);
+        splitter.payExact(id, 900 * ONE);
 
         assertEq(usdc.balanceOf(address(splitter)), 900 * ONE);
     }
@@ -1518,7 +1522,7 @@ contract PayFrensSplitterTest is Test {
 
         vm.expectRevert(SafeERC20.TransferFromFailed.selector);
         vm.prank(alice);
-        s.pay(id);
+        s.payExact(id, 10 * ONE);
     }
 
     /// @dev USDT-style tokens return nothing at all. That is still a success.
@@ -1537,7 +1541,7 @@ contract PayFrensSplitterTest is Test {
         uint256 id = s.createEvenSplit("Quiet token", p, 10 * ONE, false);
 
         vm.prank(alice);
-        s.pay(id);
+        s.payExact(id, 10 * ONE);
 
         assertEq(quiet.balanceOf(address(s)), 10 * ONE);
         assertTrue(s.isFullyPaid(id));

@@ -525,19 +525,6 @@ export const payFrensSplitterAbi = [
   },
   {
     "type": "function",
-    "name": "pay",
-    "inputs": [
-      {
-        "name": "splitId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
     "name": "payExact",
     "inputs": [
       {
@@ -549,24 +536,6 @@ export const payFrensSplitterAbi = [
         "name": "expectedShare",
         "type": "uint96",
         "internalType": "uint96"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "payFor",
-    "inputs": [
-      {
-        "name": "splitId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "participant",
-        "type": "address",
-        "internalType": "address"
       }
     ],
     "outputs": [],

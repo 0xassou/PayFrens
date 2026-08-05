@@ -75,13 +75,18 @@ can no longer pay. Two consequences worth knowing:
   later added back, never duplicates the entry.
 
 **Payers state what they expect.** Because a creator can raise a share right up
-until the first payment lands — and the mini-app approves USDC once, unlimited,
-rather than per payment — plain `pay()` would let an edit charge someone more
-than the screen they were looking at said. `payExact(splitId, expectedShare)`
-reverts with `ShareChanged` unless the amount still matches, and is what the
-app calls. `pay()` and `payFor()` remain for callers that genuinely mean
-"whatever I owe right now"; `payForExact` is the guarded form of spotting
-someone.
+until the first payment lands — and clients approve USDC to this registry once,
+unlimited, rather than per payment — an unguarded "pay whatever I owe" would
+let an edit charge someone more than the screen they were looking at said. So
+there is no such function. `payExact(splitId, expectedShare)` and
+`payForExact(splitId, participant, expectedShare)` are the only ways in, and
+both revert with `ShareChanged` unless the amount still matches. The guarantee
+is a property of the contract, not of the client that happens to be calling it.
+
+One consequence for error handling: the share check runs before the split is
+looked up, so an outsider or a wrong id surfaces `ShareChanged` rather than
+`NotParticipant` or `SplitDoesNotExist`. Those two are still reachable by
+naming zero, which is what the tests do.
 
 ## Deployment
 
