@@ -20,6 +20,8 @@ export type Split = {
   paidCount: number;
   allowPartialWithdraw: boolean;
   status: SplitStatus;
+  /** Bumped by every edit; 0 for a split never edited. */
+  revision: number;
   participants: readonly Address[];
   shares: readonly bigint[];
   paidFlags: readonly boolean[];
@@ -38,6 +40,7 @@ export type RawSplitView = {
   paidCount: bigint;
   allowPartialWithdraw: boolean;
   status: number;
+  revision: bigint;
   participants: readonly Address[];
   shares: readonly bigint[];
   paidFlags: readonly boolean[];
@@ -49,6 +52,7 @@ export function toSplit(raw: RawSplitView): Split {
     createdAt: Number(raw.createdAt),
     participantCount: Number(raw.participantCount),
     paidCount: Number(raw.paidCount),
+    revision: Number(raw.revision),
     status: raw.status as SplitStatus,
   };
 }
@@ -97,6 +101,29 @@ export function hasPaid(split: Split, account?: Address): boolean {
 function indexOf(split: Split, account: Address): number {
   const target = account.toLowerCase();
   return split.participants.findIndex((address) => address.toLowerCase() === target);
+}
+
+export function isCreator(split: Split, account?: Address): boolean {
+  return Boolean(account && split.creator.toLowerCase() === account.toLowerCase());
+}
+
+/**
+ * Whether this split still belongs on `account`'s list at all.
+ *
+ * `splitsJoinedBy` is append-only on chain: an edit that drops someone from the
+ * roster cannot take the id back out of their joined history, because splicing
+ * an unbounded array is unbounded gas. So the contract leaves the stale id and
+ * expects the reader to check current membership — this is that check. Creators
+ * stay involved regardless; authorship is not editable.
+ */
+export function involves(split: Split, account?: Address): boolean {
+  if (!account) return false;
+  return isCreator(split, account) || indexOf(split, account) !== -1;
+}
+
+/** A split's creator may still edit it under exactly the `cancel()` conditions. */
+export function isEditable(split: Split, account?: Address): boolean {
+  return isCreator(split, account) && split.status === SplitStatus.Open && split.amountPaid === 0n;
 }
 
 /**

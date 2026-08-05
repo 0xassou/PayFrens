@@ -42,7 +42,14 @@ export function friendlyError(error: Error, fallback = "Something went wrong. Pl
   if (/ZeroShare/i.test(text)) return "Everyone needs a share above zero.";
   if (/LengthMismatch/i.test(text)) return "Participants and shares don't line up.";
   if (/AlreadyPaid/i.test(text)) return "That share is already paid.";
-  if (/PaymentsAlreadyStarted/i.test(text)) return "Someone already paid — this split can't be cancelled now.";
+  if (/PaymentsAlreadyStarted/i.test(text)) {
+    return "Someone already paid — this split can't be changed now.";
+  }
+  // The creator edited the split between this screen loading and the payment
+  // landing. Saying "refresh" is the whole fix, and it is the honest reason.
+  if (/ShareChanged/i.test(text)) {
+    return "This split changed just now — refresh to see what you owe.";
+  }
   if (/NotFullyPaid/i.test(text)) return "Not everyone has paid yet.";
   if (/NotParticipant/i.test(text)) return "You're not part of this split.";
   if (/NotCreator/i.test(text)) return "Only the person who created this split can do that.";

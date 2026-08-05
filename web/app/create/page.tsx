@@ -19,8 +19,9 @@ import {cn} from "@/lib/cn";
 import {formatUsdc, parseUsdc} from "@/lib/format";
 import {useMiniAppReady} from "@/lib/hooks/use-mini-app";
 import {useProfiles} from "@/lib/hooks/use-profiles";
-import {useCreateSplit} from "@/lib/hooks/use-split-actions";
+import {useCreateSplit, useEditSplit} from "@/lib/hooks/use-split-actions";
 import {useSplit} from "@/lib/hooks/use-splits";
+import {isCreator, isEditable} from "@/lib/splits";
 import {friendlyError, reportError} from "@/lib/errors";
 
 type Mode = "even" | "custom";
@@ -29,7 +30,7 @@ export default function CreatePage() {
   return (
     <Suspense
       fallback={
-        <AppShell back="/" title="New split">
+        <AppShell back="/" title="Split">
           <div className="flex justify-center py-24 text-content-subtle">
             <Spinner />
           </div>
@@ -48,31 +49,72 @@ function CreateScreen() {
   const params = useSearchParams();
   const {address, isConnected} = useAccount();
 
-  const [mode, setMode] = useState<Mode>("even");
-  const [totalInput, setTotalInput] = useState("");
-  const [allowPartial, setAllowPartial] = useState(false);
-
-  // "Run it back with the same group": /create?from=<splitId> copies the roster
-  // (and the title) off an existing split so a repeat dinner is one tap.
+  // Two ways to arrive with a split already on screen, and they seed it
+  // differently:
+  //   /create?from=<id> — "run it back with the same group": the roster and the
+  //     title come along, the amounts do not, and this ends up a new split.
+  //   /create?edit=<id> — the creator correcting the split itself: everything
+  //     comes along, and saving rewrites that same id rather than making
+  //     another one. Only legal while nothing has been paid.
+  const editId = params.get("edit");
   const fromId = params.get("from");
-  const {split: source} = useSplit(fromId ? BigInt(fromId) : undefined);
+  const editing = editId !== null;
+  const sourceId = editId ?? fromId;
+
+  const {split: source} = useSplit(sourceId ? BigInt(sourceId) : undefined);
 
   // The seed is derived from the fetched split rather than copied into state by
   // an effect; the edited value simply takes over the moment the user touches
   // anything. No post-fetch setState, so no cascading render.
   const [editedEntries, setEntries] = useState<Entry[] | null>(null);
   const [editedTitle, setTitle] = useState<string | null>(null);
+  const [editedMode, setMode] = useState<Mode | null>(null);
+  const [editedTotal, setTotalInput] = useState<string | null>(null);
+  const [editedAllowPartial, setAllowPartial] = useState<boolean | null>(null);
 
   const seededEntries = useMemo<Entry[]>(
-    () => source?.participants.map((participant) => ({address: participant, share: ""})) ?? [],
-    [source],
+    () =>
+      source?.participants.map((participant, index) => ({
+        address: participant,
+        // Only an edit carries the amounts over: a repeat dinner is rarely the
+        // same bill twice, and a stale number looks like a real one.
+        share: editing ? formatUsdc(source.shares[index] ?? 0n, {symbol: false}) : "",
+      })) ?? [],
+    [source, editing],
   );
 
+  // Whether the source's shares are exactly what dividing its total evenly
+  // would produce. The contract does not record which builder made a split, so
+  // this reconstructs the intent well enough to reopen the right tab.
+  const seededMode = useMemo<Mode>(() => {
+    if (!editing || !source) return "even";
+    const even = evenShares(source.totalAmount, source.participants.length);
+    return source.shares.every((share, index) => share === even[index]) ? "even" : "custom";
+  }, [editing, source]);
+
   const entries = editedEntries ?? seededEntries;
-  const title = editedTitle ?? (source?.title ? `${source.title} (again)` : "");
+  const seededTitle = editing
+    ? (source?.title ?? "")
+    : source?.title
+      ? `${source.title} (again)`
+      : "";
+  const title = editedTitle ?? seededTitle;
+  const mode = editedMode ?? seededMode;
+  const totalInput =
+    editedTotal ?? (editing && source ? formatUsdc(source.totalAmount, {symbol: false}) : "");
+  const allowPartial = editedAllowPartial ?? source?.allowPartialWithdraw ?? false;
 
   const {data: profiles} = useProfiles(entries.map((entry) => entry.address));
-  const {create, createdId, isPending, error} = useCreateSplit();
+  const {create, createdId, isPending: isCreating, error: createError} = useCreateSplit();
+  const {
+    edit,
+    isSuccess: edited,
+    isPending: isSaving,
+    error: editError,
+  } = useEditSplit(editId ? BigInt(editId) : undefined);
+
+  const isPending = editing ? isSaving : isCreating;
+  const error = editing ? editError : createError;
 
   const total = useMemo(() => {
     if (mode === "even") return parseUsdc(totalInput) ?? 0n;
@@ -85,32 +127,54 @@ function CreateScreen() {
     if (createdId !== null) router.push(`/split/${createdId}`);
   }, [createdId, router]);
 
+  // An edit keeps its id, so there is nothing to read off a receipt — the
+  // moment it confirms, the split screen is where the user wants to be.
+  useEffect(() => {
+    if (edited && editId) router.push(`/split/${editId}`);
+  }, [edited, editId, router]);
+
   async function submit() {
     if (problem) return;
 
     const participants = entries.map((entry) => entry.address as Address);
+    const input =
+      mode === "even"
+        ? {title: title.trim(), participants, total, allowPartialWithdraw: allowPartial}
+        : {
+            title: title.trim(),
+            participants,
+            shares: entries.map((entry) => parseUsdc(entry.share) ?? 0n),
+            allowPartialWithdraw: allowPartial,
+          };
 
     try {
-      await create(
-        mode === "even"
-          ? {title: title.trim(), participants, total, allowPartialWithdraw: allowPartial}
-          : {
-              title: title.trim(),
-              participants,
-              shares: entries.map((entry) => parseUsdc(entry.share) ?? 0n),
-              allowPartialWithdraw: allowPartial,
-            },
-      );
+      await (editing ? edit(input) : create(input));
     } catch (cause) {
       // The hook already stores this for the banner. Caught here so it does not
       // escape as an unhandled rejection, and logged so the underlying cause is
       // one console open away rather than lost behind the friendly copy.
-      reportError("createSplit failed", cause as Error);
+      reportError(editing ? "editSplit failed" : "createSplit failed", cause as Error);
     }
   }
 
+  // Editing is only legal for the creator, before anyone pays. The contract
+  // enforces it, but finding out by wallet revert after filling in a form is a
+  // bad way to learn — and arriving here on a split someone just paid into is
+  // an ordinary race, not a mistake.
+  if (editing && source && !isEditable(source, address)) {
+    return (
+      <AppShell back={`/split/${editId}`} title="Edit split">
+        <p className="py-12 text-center text-sm text-content-muted">
+          {isCreator(source, address)
+            ? "Someone has already paid into this split, so it can't be changed now."
+            : "Only the person who created this split can change it."}
+        </p>
+      </AppShell>
+    );
+  }
+
   return (
-    <AppShell back="/" title="New split">
+    <AppShell back={editing ? `/split/${editId}` : "/"} title={editing ? "Edit split" : "New split"}>
       <div className="space-y-5 pb-32">
         <Field label="What's it for?">
           <Input
@@ -178,9 +242,9 @@ function CreateScreen() {
           )}
         </div>
 
-        {/* Sets `allowPartialWithdraw` on the split. It is fixed at creation —
-            the contract has no setter — so the consequence is spelled out here,
-            while it can still be changed. */}
+        {/* Sets `allowPartialWithdraw` on the split. Editable only while nobody
+            has paid — the same window as everything else on this screen — so
+            the consequence is spelled out here, while it can still change. */}
         <Toggle
           checked={allowPartial}
           onChange={setAllowPartial}
@@ -205,7 +269,7 @@ function CreateScreen() {
         </div>
 
         <Button size="lg" fullWidth onClick={submit} loading={isPending} disabled={Boolean(problem)}>
-          {problem ?? "Create split"}
+          {problem ?? (editing ? "Save changes" : "Create split")}
         </Button>
       </div>
     </AppShell>

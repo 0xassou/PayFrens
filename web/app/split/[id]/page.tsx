@@ -11,10 +11,16 @@ type Props = {params: Promise<{id: string}>};
  * Embed metadata, so a shared split renders as an interactive card in
  * Farcaster / Base App feeds rather than a bare link.
  *
- * The image URL carries the paid count as a query parameter. It changes
- * whenever someone pays, which is what forces feed clients to fetch a fresh
- * card instead of serving the snapshot they cached when the split was first
- * posted.
+ * The image URL carries the split's mutable state as query parameters. They
+ * change whenever someone pays, whenever the split is cancelled, and whenever
+ * the creator edits it, which is what forces feed clients to fetch a fresh card
+ * instead of serving the snapshot they cached when the split was first posted.
+ *
+ * `r` — the edit revision — is not redundant with the other two. Editing is
+ * only legal while nothing has been paid and the split is still open, so an
+ * edit is precisely the case where `p` and `s` cannot move: without it, a title
+ * or amount correction would leave every already-posted card showing the old
+ * numbers for good.
  */
 export async function generateMetadata({params}: Props): Promise<Metadata> {
   const {id} = await params;
@@ -38,7 +44,7 @@ export async function generateMetadata({params}: Props): Promise<Metadata> {
     : "Split a bill in USDC on Base.";
 
   const imageUrl = absoluteUrl(
-    `/api/og/split/${id}${split ? `?p=${split.paidCount}&s=${split.status}` : ""}`,
+    `/api/og/split/${id}${split ? `?p=${split.paidCount}&s=${split.status}&r=${split.revision}` : ""}`,
   );
 
   const buttonTitle = split && isFullyPaid(split) ? "View split" : "Pay my share";

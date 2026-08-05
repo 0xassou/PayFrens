@@ -29,6 +29,13 @@ export type PayStep = "idle" | "approving" | "paying" | "confirming" | "done" | 
  * We approve `maxUint256` rather than the exact share: the allowance is granted
  * to the registry, which every split shares, so approving once means every
  * future split really is one tap.
+ *
+ * That standing allowance is why this calls `payExact` and not `pay`. A split's
+ * creator can rewrite its shares until the first payment lands, so between the
+ * moment this screen read the share and the moment the transaction executes,
+ * the amount owed can change — and an unlimited approval would not stop the
+ * larger charge. `payExact` names the amount on screen and reverts if the chain
+ * disagrees, so the user is never charged something they did not see.
  */
 export function usePayShare(splitId: bigint | undefined, share: bigint | undefined) {
   const {address} = useAccount();
@@ -76,8 +83,8 @@ export function usePayShare(splitId: bigint | undefined, share: bigint | undefin
     const payCall = {
       to: spender,
       abi: payFrensSplitterAbi,
-      functionName: "pay",
-      args: [splitId],
+      functionName: "payExact",
+      args: [splitId, share],
     } as const;
 
     try {
@@ -109,8 +116,8 @@ export function usePayShare(splitId: bigint | undefined, share: bigint | undefin
       const hash = await writeContractAsync({
         address: spender,
         abi: payFrensSplitterAbi,
-        functionName: "pay",
-        args: [splitId],
+        functionName: "payExact",
+        args: [splitId, share],
         chainId: ACTIVE_CHAIN_ID,
       });
       setTxHash(hash);

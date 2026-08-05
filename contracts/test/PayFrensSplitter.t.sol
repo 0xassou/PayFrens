@@ -36,6 +36,15 @@ contract PayFrensSplitterTest is Test {
         uint256 paidCount,
         uint256 participantCount
     );
+    event SplitEdited(
+        uint256 indexed splitId,
+        address indexed creator,
+        uint256 revision,
+        uint256 totalAmount,
+        uint256 participantCount,
+        bool allowPartialWithdraw,
+        string title
+    );
     event SplitFunded(uint256 indexed splitId, uint256 totalAmount);
     event Withdrawn(uint256 indexed splitId, address indexed creator, uint256 netAmount, uint256 feeAmount);
     event SplitCancelled(uint256 indexed splitId);
@@ -77,6 +86,36 @@ contract PayFrensSplitterTest is Test {
             vm.prank(p[i]);
             splitter.pay(id);
         }
+    }
+
+    function _one(address a) internal pure returns (address[] memory p) {
+        p = new address[](1);
+        p[0] = a;
+    }
+
+    function _pair(address a, address b) internal pure returns (address[] memory p) {
+        p = new address[](2);
+        p[0] = a;
+        p[1] = b;
+    }
+
+    function _oneShare(uint96 a) internal pure returns (uint96[] memory s) {
+        s = new uint96[](1);
+        s[0] = a;
+    }
+
+    function _shares(uint96 a, uint96 b) internal pure returns (uint96[] memory s) {
+        s = new uint96[](2);
+        s[0] = a;
+        s[1] = b;
+    }
+
+    /// @dev Gives an address USDC and a standing approval, like `setUp` does for
+    ///      the regulars. For participants added to a split after creation.
+    function _fund(address account) internal {
+        usdc.mint(account, 1_000 * ONE);
+        vm.prank(account);
+        usdc.approve(address(splitter), type(uint256).max);
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -817,6 +856,539 @@ contract PayFrensSplitterTest is Test {
         vm.expectRevert(abi.encodeWithSelector(PayFrensSplitter.PaymentsAlreadyStarted.selector, id));
         vm.prank(creator);
         splitter.cancel(id);
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                            EDITING — NOMINAL
+    //////////////////////////////////////////////////////////////*/
+
+    function test_Edit_RewritesTitleRosterAndAmounts() public {
+        uint256 id = _createEven30();
+
+        vm.prank(creator);
+        splitter.editSplit(id, "Dinner, corrected", _pair(alice, stranger), _shares(4 * ONE, 6 * ONE), false);
+
+        PayFrensSplitter.SplitView memory s = splitter.getSplit(id);
+        assertEq(s.title, "Dinner, corrected");
+        assertEq(s.totalAmount, 10 * ONE);
+        assertEq(s.participantCount, 2);
+        assertEq(s.participants.length, 2);
+        assertEq(s.participants[0], alice);
+        assertEq(s.participants[1], stranger);
+        assertEq(s.shares[0], 4 * ONE);
+        assertEq(s.shares[1], 6 * ONE);
+        // Untouched by an edit.
+        assertEq(s.creator, creator);
+        assertEq(s.amountPaid, 0);
+        assertEq(s.paidCount, 0);
+        assertEq(uint8(s.status), uint8(PayFrensSplitter.SplitStatus.Open));
+    }
+
+    function test_Edit_EmitsSplitEditedWithTheNewShape() public {
+        uint256 id = _createEven30();
+
+        vm.expectEmit(true, true, false, true);
+        emit SplitEdited(id, creator, 1, 10 * ONE, 2, true, "Regrouped");
+        vm.prank(creator);
+        splitter.editSplit(id, "Regrouped", _pair(alice, bob), _shares(4 * ONE, 6 * ONE), true);
+    }
+
+    /// @dev The OG share card is cached against this. It has to move on every
+    ///      edit, because nothing else on the split is allowed to.
+    function test_Edit_BumpsRevisionEveryTime() public {
+        uint256 id = _createEven30();
+        assertEq(splitter.getSplit(id).revision, 0);
+
+        vm.prank(creator);
+        splitter.editSplit(id, "One", _one(alice), _oneShare(ONE), false);
+        assertEq(splitter.getSplit(id).revision, 1);
+
+        vm.prank(creator);
+        splitter.editSplit(id, "Two", _one(alice), _oneShare(2 * ONE), false);
+        assertEq(splitter.getSplit(id).revision, 2);
+    }
+
+    function test_EditEven_RedividesOverTheNewRosterIncludingTheRemainder() public {
+        uint256 id = _createEven30();
+
+        // 10 base units over 3 people: 4, 3, 3 — the odd unit goes to the front.
+        vm.prank(creator);
+        splitter.editEvenSplit(id, "Coffee", _trio(), 10, false);
+
+        PayFrensSplitter.SplitView memory s = splitter.getSplit(id);
+        assertEq(s.totalAmount, 10);
+        assertEq(s.shares[0], 4);
+        assertEq(s.shares[1], 3);
+        assertEq(s.shares[2], 3);
+    }
+
+    function test_Edit_CanFlipTheWithdrawalPolicy() public {
+        uint256 id = _createEven30();
+        assertFalse(splitter.getSplit(id).allowPartialWithdraw);
+
+        vm.prank(creator);
+        splitter.editEvenSplit(id, "Dinner", _trio(), 30 * ONE, true);
+
+        assertTrue(splitter.getSplit(id).allowPartialWithdraw);
+    }
+
+    function test_Edit_ThenEveryonePaysTheNewAmountsAndTheCreatorWithdraws() public {
+        uint256 id = _createEven30();
+
+        vm.prank(creator);
+        splitter.editSplit(id, "Dinner", _pair(alice, bob), _shares(7 * ONE, 3 * ONE), false);
+
+        vm.prank(alice);
+        splitter.payExact(id, 7 * ONE);
+        vm.prank(bob);
+        splitter.payExact(id, 3 * ONE);
+
+        assertTrue(splitter.isFullyPaid(id));
+
+        uint256 before = usdc.balanceOf(creator);
+        vm.prank(creator);
+        (uint256 net,) = splitter.withdraw(id);
+        assertEq(usdc.balanceOf(creator), before + net);
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                        EDITING — ROSTER REWRITE
+    //////////////////////////////////////////////////////////////*/
+
+    /// @dev The whole point of clearing the old roster: membership lives in the
+    ///      per-address mapping, which `pay` is the only thing that reads. Leave
+    ///      a stale entry behind and a removed participant keeps paying in.
+    function test_Edit_RemovedParticipantCanNoLongerPay() public {
+        uint256 id = _createEven30();
+
+        vm.prank(creator);
+        splitter.editSplit(id, "Dinner", _pair(bob, carol), _shares(5 * ONE, 5 * ONE), false);
+
+        vm.expectRevert(abi.encodeWithSelector(PayFrensSplitter.NotParticipant.selector, id, alice));
+        vm.prank(alice);
+        splitter.pay(id);
+
+        assertEq(splitter.amountOwed(id, alice), 0);
+        (uint256 share, bool paid) = splitter.getParticipant(id, alice);
+        assertEq(share, 0);
+        assertFalse(paid);
+    }
+
+    /// @dev Nor can anyone spot them — `payFor` reads the same mapping.
+    function test_Edit_NobodyCanPayForARemovedParticipant() public {
+        uint256 id = _createEven30();
+
+        vm.prank(creator);
+        splitter.editSplit(id, "Dinner", _pair(bob, carol), _shares(5 * ONE, 5 * ONE), false);
+
+        vm.expectRevert(abi.encodeWithSelector(PayFrensSplitter.NotParticipant.selector, id, alice));
+        vm.prank(bob);
+        splitter.payFor(id, alice);
+    }
+
+    /// @dev The trap in the other direction: a non-zero share doubles as the
+    ///      duplicate check, so someone kept across an edit would be rejected as
+    ///      a duplicate of themselves if the old roster were not cleared first.
+    function test_Edit_KeptParticipantIsNotTreatedAsADuplicate() public {
+        uint256 id = _createEven30();
+
+        vm.prank(creator);
+        splitter.editSplit(id, "Dinner", _pair(alice, bob), _shares(8 * ONE, 2 * ONE), false);
+
+        PayFrensSplitter.SplitView memory s = splitter.getSplit(id);
+        assertEq(s.participants.length, 2);
+        assertEq(s.shares[0], 8 * ONE);
+        assertEq(splitter.amountOwed(id, alice), 8 * ONE);
+    }
+
+    /// @dev Same address, same position, several revisions deep.
+    function test_Edit_SurvivesRepeatedEditsKeepingTheSameRoster() public {
+        uint256 id = _createEven30();
+
+        for (uint96 i = 1; i <= 5; ++i) {
+            vm.prank(creator);
+            splitter.editEvenSplit(id, "Dinner", _trio(), i * 3 * ONE, false);
+        }
+
+        PayFrensSplitter.SplitView memory s = splitter.getSplit(id);
+        assertEq(s.revision, 5);
+        assertEq(s.totalAmount, 15 * ONE);
+        assertEq(s.participants.length, 3);
+        assertEq(splitter.getParticipants(id).length, 3);
+    }
+
+    function test_Edit_ShrinksAndGrowsTheParticipantList() public {
+        uint256 id = _createEven30();
+
+        vm.prank(creator);
+        splitter.editSplit(id, "Solo", _one(alice), _oneShare(10 * ONE), false);
+        assertEq(splitter.getParticipants(id).length, 1);
+        assertEq(splitter.getSplit(id).participantCount, 1);
+
+        vm.prank(creator);
+        splitter.editEvenSplit(id, "Group", _trio(), 30 * ONE, false);
+        assertEq(splitter.getParticipants(id).length, 3);
+        assertEq(splitter.getSplit(id).participantCount, 3);
+    }
+
+    /// @dev An edit must not reach into a split it was not called on, even when
+    ///      the two share participants.
+    function test_Edit_LeavesOtherSplitsAlone() public {
+        uint256 first = _createEven30();
+        vm.prank(creator);
+        uint256 second = splitter.createEvenSplit("Taxi", _trio(), 9 * ONE, false);
+
+        vm.prank(creator);
+        splitter.editSplit(first, "Dinner", _one(bob), _oneShare(10 * ONE), false);
+
+        assertEq(splitter.amountOwed(second, alice), 3 * ONE);
+        vm.prank(alice);
+        splitter.payExact(second, 3 * ONE);
+        assertEq(splitter.getSplit(second).paidCount, 1);
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                     EDITING — JOINED-HISTORY BOOKKEEPING
+    //////////////////////////////////////////////////////////////*/
+
+    /// @dev `_joinedSplits` is append-only. Editing must not append a second
+    ///      copy of the id for someone who never left.
+    function test_Edit_DoesNotDuplicateJoinedHistoryForAKeptParticipant() public {
+        uint256 id = _createEven30();
+        assertEq(splitter.splitsJoinedCount(alice), 1);
+
+        vm.prank(creator);
+        splitter.editEvenSplit(id, "Dinner", _trio(), 60 * ONE, false);
+        vm.prank(creator);
+        splitter.editEvenSplit(id, "Dinner", _trio(), 90 * ONE, false);
+
+        assertEq(splitter.splitsJoinedCount(alice), 1);
+        assertEq(splitter.splitsJoinedBy(alice)[0], id);
+    }
+
+    /// @dev Nor when someone is removed and later added back: the flag that
+    ///      records "already in this list" is deliberately never cleared.
+    function test_Edit_DoesNotDuplicateJoinedHistoryOnRemoveThenReAdd() public {
+        uint256 id = _createEven30();
+
+        vm.prank(creator);
+        splitter.editSplit(id, "Dinner", _one(bob), _oneShare(10 * ONE), false);
+        assertEq(splitter.splitsJoinedCount(alice), 1);
+
+        vm.prank(creator);
+        splitter.editEvenSplit(id, "Dinner", _trio(), 30 * ONE, false);
+
+        assertEq(splitter.splitsJoinedCount(alice), 1);
+    }
+
+    /// @dev The residual this design accepts: a removed participant keeps the id
+    ///      in their joined list forever, because splicing it out means walking
+    ///      an unbounded array. Readers are expected to check membership — which
+    ///      is exactly what this asserts is possible.
+    function test_Edit_LeavesAStaleJoinedEntryThatMembershipDistinguishes() public {
+        uint256 id = _createEven30();
+
+        vm.prank(creator);
+        splitter.editSplit(id, "Dinner", _pair(bob, carol), _shares(5 * ONE, 5 * ONE), false);
+
+        assertEq(splitter.splitsJoinedCount(alice), 1);
+        assertEq(splitter.splitsJoinedBy(alice)[0], id);
+
+        // …and here is the tell a client filters on.
+        (uint256 share,) = splitter.getParticipant(id, alice);
+        assertEq(share, 0);
+    }
+
+    function test_Edit_AddsJoinedHistoryForANewParticipant() public {
+        uint256 id = _createEven30();
+        assertEq(splitter.splitsJoinedCount(stranger), 0);
+
+        vm.prank(creator);
+        splitter.editSplit(id, "Dinner", _pair(alice, stranger), _shares(5 * ONE, 5 * ONE), false);
+
+        assertEq(splitter.splitsJoinedCount(stranger), 1);
+        assertEq(splitter.splitsJoinedBy(stranger)[0], id);
+    }
+
+    /// @dev Editing changes no one's authorship, so the created list is untouched.
+    function test_Edit_DoesNotTouchCreatedHistory() public {
+        uint256 id = _createEven30();
+        assertEq(splitter.splitsCreatedCount(creator), 1);
+
+        vm.prank(creator);
+        splitter.editEvenSplit(id, "Dinner", _pair(alice, bob), 10 * ONE, false);
+
+        assertEq(splitter.splitsCreatedCount(creator), 1);
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                          EDITING — EDGE CASES
+    //////////////////////////////////////////////////////////////*/
+
+    function test_Edit_RevertsForNonCreator() public {
+        uint256 id = _createEven30();
+
+        vm.expectRevert(abi.encodeWithSelector(PayFrensSplitter.NotCreator.selector, id));
+        vm.prank(alice);
+        splitter.editEvenSplit(id, "Mine now", _one(alice), ONE, false);
+    }
+
+    /// @dev The same window as `cancel`, for the same reason: past the first
+    ///      payment there is settled money whose accounting an edit would break.
+    function test_Edit_RevertsOnceSomeoneHasPaid() public {
+        uint256 id = _createEven30();
+
+        vm.prank(alice);
+        splitter.pay(id);
+
+        vm.expectRevert(abi.encodeWithSelector(PayFrensSplitter.PaymentsAlreadyStarted.selector, id));
+        vm.prank(creator);
+        splitter.editEvenSplit(id, "Too late", _trio(), 60 * ONE, false);
+    }
+
+    function test_Edit_RevertsOnceSomeoneHasBeenSpotted() public {
+        uint256 id = _createEven30();
+
+        vm.prank(alice);
+        splitter.payFor(id, bob);
+
+        vm.expectRevert(abi.encodeWithSelector(PayFrensSplitter.PaymentsAlreadyStarted.selector, id));
+        vm.prank(creator);
+        splitter.editEvenSplit(id, "Too late", _trio(), 60 * ONE, false);
+    }
+
+    function test_Edit_RevertsOnACancelledSplit() public {
+        uint256 id = _createEven30();
+
+        vm.prank(creator);
+        splitter.cancel(id);
+
+        vm.expectRevert(abi.encodeWithSelector(PayFrensSplitter.SplitNotOpen.selector, id));
+        vm.prank(creator);
+        splitter.editEvenSplit(id, "Undo", _trio(), 30 * ONE, false);
+    }
+
+    function test_Edit_RevertsForAnUnknownId() public {
+        vm.expectRevert(abi.encodeWithSelector(PayFrensSplitter.SplitDoesNotExist.selector, 99));
+        vm.prank(creator);
+        splitter.editEvenSplit(99, "Ghost", _trio(), 30 * ONE, false);
+    }
+
+    function test_Edit_RevertsOnLengthMismatch() public {
+        uint256 id = _createEven30();
+
+        uint96[] memory shares = new uint96[](1);
+        shares[0] = ONE;
+
+        vm.expectRevert(PayFrensSplitter.LengthMismatch.selector);
+        vm.prank(creator);
+        splitter.editSplit(id, "Dinner", _pair(alice, bob), shares, false);
+    }
+
+    function test_Edit_RevertsOnADuplicateInTheNewRoster() public {
+        uint256 id = _createEven30();
+
+        vm.expectRevert(abi.encodeWithSelector(PayFrensSplitter.DuplicateParticipant.selector, alice));
+        vm.prank(creator);
+        splitter.editSplit(id, "Dinner", _pair(alice, alice), _shares(ONE, ONE), false);
+    }
+
+    function test_Edit_RevertsOnAZeroShare() public {
+        uint256 id = _createEven30();
+
+        vm.expectRevert(abi.encodeWithSelector(PayFrensSplitter.ZeroShare.selector, bob));
+        vm.prank(creator);
+        splitter.editSplit(id, "Dinner", _pair(alice, bob), _shares(ONE, 0), false);
+    }
+
+    function test_Edit_RevertsOnAZeroAddress() public {
+        uint256 id = _createEven30();
+
+        vm.expectRevert(PayFrensSplitter.ZeroAddress.selector);
+        vm.prank(creator);
+        splitter.editSplit(id, "Dinner", _pair(alice, address(0)), _shares(ONE, ONE), false);
+    }
+
+    function test_Edit_RevertsOnAnEmptyRoster() public {
+        uint256 id = _createEven30();
+
+        vm.expectRevert(PayFrensSplitter.NoParticipants.selector);
+        vm.prank(creator);
+        splitter.editSplit(id, "Nobody", new address[](0), new uint96[](0), false);
+    }
+
+    function test_Edit_RevertsOnTooManyParticipants() public {
+        uint256 id = _createEven30();
+
+        uint256 n = splitter.MAX_PARTICIPANTS() + 1;
+        address[] memory many = new address[](n);
+        uint96[] memory shares = new uint96[](n);
+        for (uint256 i; i < n; ++i) {
+            many[i] = address(uint160(i + 1));
+            shares[i] = ONE;
+        }
+
+        vm.expectRevert(PayFrensSplitter.TooManyParticipants.selector);
+        vm.prank(creator);
+        splitter.editSplit(id, "Stadium", many, shares, false);
+    }
+
+    function test_Edit_RevertsOnATitleOverTheLimit() public {
+        uint256 id = _createEven30();
+
+        string memory tooLong = new string(splitter.MAX_TITLE_BYTES() + 1);
+
+        vm.expectRevert(PayFrensSplitter.TitleTooLong.selector);
+        vm.prank(creator);
+        splitter.editEvenSplit(id, tooLong, _trio(), 30 * ONE, false);
+    }
+
+    /// @dev A rejected edit must leave the split exactly as it was — the roster
+    ///      is cleared partway through the call that reverts.
+    function test_Edit_LeavesTheSplitIntactWhenItReverts() public {
+        uint256 id = _createEven30();
+
+        vm.expectRevert(abi.encodeWithSelector(PayFrensSplitter.DuplicateParticipant.selector, bob));
+        vm.prank(creator);
+        splitter.editSplit(id, "Broken", _pair(bob, bob), _shares(ONE, ONE), false);
+
+        PayFrensSplitter.SplitView memory s = splitter.getSplit(id);
+        assertEq(s.title, "Dinner");
+        assertEq(s.totalAmount, 30 * ONE);
+        assertEq(s.participants.length, 3);
+        assertEq(s.revision, 0);
+        assertEq(splitter.amountOwed(id, alice), 10 * ONE);
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                                PAY EXACT
+    //////////////////////////////////////////////////////////////*/
+
+    function test_PayExact_PaysWhenTheAmountStillMatches() public {
+        uint256 id = _createEven30();
+
+        vm.prank(alice);
+        splitter.payExact(id, 10 * ONE);
+
+        assertEq(splitter.getSplit(id).amountPaid, 10 * ONE);
+        assertEq(splitter.amountOwed(id, alice), 0);
+    }
+
+    /// @dev The reason `payExact` exists. Alice approved USDC to the registry
+    ///      once, for every split she will ever be in; without the guard the
+    ///      creator could raise her share moments before she pays and the
+    ///      allowance would not stand in the way.
+    function test_PayExact_RefusesAShareTheCreatorRaisedUnderneathIt() public {
+        uint256 id = _createEven30();
+
+        vm.prank(creator);
+        splitter.editSplit(id, "Dinner", _pair(alice, bob), _shares(900 * ONE, ONE), false);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(PayFrensSplitter.ShareChanged.selector, id, alice, 10 * ONE, 900 * ONE)
+        );
+        vm.prank(alice);
+        splitter.payExact(id, 10 * ONE);
+
+        assertEq(usdc.balanceOf(address(splitter)), 0);
+    }
+
+    /// @dev The same edit against plain `pay`, which takes whatever the share
+    ///      says at execution time. Documented here so the difference between
+    ///      the two entry points is a test, not a claim in a comment.
+    function test_Pay_TakesTheRaisedShareWithoutAsking() public {
+        uint256 id = _createEven30();
+
+        vm.prank(creator);
+        splitter.editSplit(id, "Dinner", _pair(alice, bob), _shares(900 * ONE, ONE), false);
+
+        vm.prank(alice);
+        splitter.pay(id);
+
+        assertEq(usdc.balanceOf(address(splitter)), 900 * ONE);
+    }
+
+    function test_PayExact_RefusesAShareThatWasLowered() public {
+        uint256 id = _createEven30();
+
+        vm.prank(creator);
+        splitter.editSplit(id, "Dinner", _pair(alice, bob), _shares(ONE, ONE), false);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(PayFrensSplitter.ShareChanged.selector, id, alice, 10 * ONE, ONE)
+        );
+        vm.prank(alice);
+        splitter.payExact(id, 10 * ONE);
+    }
+
+    function test_PayExact_RefusesAParticipantWhoWasRemoved() public {
+        uint256 id = _createEven30();
+
+        vm.prank(creator);
+        splitter.editSplit(id, "Dinner", _pair(bob, carol), _shares(5 * ONE, 5 * ONE), false);
+
+        vm.expectRevert(abi.encodeWithSelector(PayFrensSplitter.ShareChanged.selector, id, alice, 10 * ONE, 0));
+        vm.prank(alice);
+        splitter.payExact(id, 10 * ONE);
+    }
+
+    function test_PayExact_RevertsForANonParticipantAskingForZero() public {
+        uint256 id = _createEven30();
+
+        vm.expectRevert(abi.encodeWithSelector(PayFrensSplitter.NotParticipant.selector, id, stranger));
+        vm.prank(stranger);
+        splitter.payExact(id, 0);
+    }
+
+    function test_PayExact_RevertsWhenAlreadyPaid() public {
+        uint256 id = _createEven30();
+
+        vm.prank(alice);
+        splitter.payExact(id, 10 * ONE);
+
+        vm.expectRevert(abi.encodeWithSelector(PayFrensSplitter.AlreadyPaid.selector, id, alice));
+        vm.prank(alice);
+        splitter.payExact(id, 10 * ONE);
+    }
+
+    function test_PayForExact_SpotsSomeoneAtTheAmountNamed() public {
+        uint256 id = _createEven30();
+
+        uint256 before = usdc.balanceOf(bob);
+        vm.prank(bob);
+        splitter.payForExact(id, alice, 10 * ONE);
+
+        assertEq(usdc.balanceOf(bob), before - 10 * ONE);
+        assertEq(splitter.amountOwed(id, alice), 0);
+    }
+
+    function test_PayForExact_RefusesWhenTheShareMoved() public {
+        uint256 id = _createEven30();
+
+        vm.prank(creator);
+        splitter.editSplit(id, "Dinner", _pair(alice, bob), _shares(50 * ONE, ONE), false);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(PayFrensSplitter.ShareChanged.selector, id, alice, 10 * ONE, 50 * ONE)
+        );
+        vm.prank(bob);
+        splitter.payForExact(id, alice, 10 * ONE);
+    }
+
+    /// @dev A newly added participant settles against the edited split like any
+    ///      other, allowance and all.
+    function test_PayExact_WorksForSomeoneAddedByAnEdit() public {
+        uint256 id = _createEven30();
+        _fund(stranger);
+
+        vm.prank(creator);
+        splitter.editSplit(id, "Dinner", _pair(alice, stranger), _shares(4 * ONE, 6 * ONE), false);
+
+        vm.prank(stranger);
+        splitter.payExact(id, 6 * ONE);
+
+        assertEq(splitter.getSplit(id).paidCount, 1);
+        assertEq(splitter.getSplit(id).amountPaid, 6 * ONE);
     }
 
     /*//////////////////////////////////////////////////////////////

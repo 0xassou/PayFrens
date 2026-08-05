@@ -21,6 +21,8 @@ import {usePayShare} from "@/lib/hooks/use-pay-share";
 import {useCancelSplit, useWithdraw} from "@/lib/hooks/use-split-actions";
 import {useSplit, useWithdrawalQuote} from "@/lib/hooks/use-splits";
 import {
+  isCreator,
+  isEditable,
   isFullyPaid,
   outstanding,
   shareOf,
@@ -81,7 +83,8 @@ export function SplitScreen({id}: {id: string}) {
   const complete = isFullyPaid(split);
   const cancelled = split.status === SplitStatus.Cancelled;
   const available = withdrawable(split);
-  const isCreator = Boolean(address && split.creator.toLowerCase() === address.toLowerCase());
+  const creator = isCreator(split, address);
+  const editable = isEditable(split, address);
 
   return (
     <AppShell back="/" action={<ShareButton splitId={id} title={split.title} />}>
@@ -131,7 +134,7 @@ export function SplitScreen({id}: {id: string}) {
         {!cancelled && (
           <WithdrawalPolicy
             allowPartial={split.allowPartialWithdraw}
-            isCreator={isCreator}
+            isCreator={creator}
             className="mb-6"
           />
         )}
@@ -141,24 +144,36 @@ export function SplitScreen({id}: {id: string}) {
         </h2>
         <ParticipantList split={split} profiles={profiles} viewer={address} />
 
-        {/* Mirrors `cancel()` exactly: creator, still open, nothing paid in.
-            Deliberately keyed off `isCreator` and not the viewer role — a
-            creator who is also a participant in their own split reads as
-            "participant-owes" (they are asked to pay before being told to
-            wait), which hid this button on the most common split of all. */}
-        {isCreator && !cancelled && split.amountPaid === 0n && (
+        {/* Editing and cancelling share one window — creator, still open,
+            nothing paid in — which is what `isEditable` is. Deliberately keyed
+            off that and not the viewer role: a creator who is also a
+            participant in their own split reads as "participant-owes" (they are
+            asked to pay before being told to wait), which hid this row on the
+            most common split of all. */}
+        {editable && (
           <div className="mt-4">
             {cancellation.error && (
               <p className="mb-2 text-center text-xs text-danger">{friendlyError(cancellation.error)}</p>
             )}
-            <button
-              type="button"
-              onClick={() => void cancellation.cancel()}
-              disabled={cancellation.isPending}
-              className="w-full py-2 text-xs font-medium text-content-subtle transition-colors hover:text-danger disabled:opacity-50"
-            >
-              {cancellation.isPending ? "Cancelling…" : "Cancel this split"}
-            </button>
+            <div className="flex items-center justify-center gap-4">
+              <Link
+                href={`/create?edit=${split.id}`}
+                className="py-2 text-xs font-medium text-content-subtle transition-colors hover:text-content"
+              >
+                Edit this split
+              </Link>
+              <span className="text-xs text-content-subtle/40" aria-hidden="true">
+                ·
+              </span>
+              <button
+                type="button"
+                onClick={() => void cancellation.cancel()}
+                disabled={cancellation.isPending}
+                className="py-2 text-xs font-medium text-content-subtle transition-colors hover:text-danger disabled:opacity-50"
+              >
+                {cancellation.isPending ? "Cancelling…" : "Cancel this split"}
+              </button>
+            </div>
           </div>
         )}
 

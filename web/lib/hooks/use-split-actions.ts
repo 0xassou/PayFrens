@@ -105,6 +105,66 @@ export function useCreateSplit() {
   };
 }
 
+/**
+ * Rewrites a split in place — title, roster, amounts, withdrawal policy.
+ *
+ * Only legal while the creator is the caller, the split is open, and nothing
+ * has been paid in; the contract enforces all three. Takes the same input shape
+ * as `useCreateSplit` so the create screen can drive either one.
+ */
+export function useEditSplit(splitId?: bigint) {
+  const action = useContractAction();
+
+  const edit = useCallback(
+    async (input: {
+      title: string;
+      participants: Address[];
+      total?: bigint;
+      shares?: bigint[];
+      allowPartialWithdraw?: boolean;
+    }) => {
+      if (splitId === undefined) return;
+      action.setError(null);
+
+      try {
+        const address = splitterAddress();
+        const allowPartial = input.allowPartialWithdraw ?? false;
+
+        const hash = input.shares
+          ? await action.writeContractAsync({
+              address,
+              abi: payFrensSplitterAbi,
+              functionName: "editSplit",
+              args: [splitId, input.title, input.participants, input.shares, allowPartial],
+              chainId: ACTIVE_CHAIN_ID,
+            })
+          : await action.writeContractAsync({
+              address,
+              abi: payFrensSplitterAbi,
+              functionName: "editEvenSplit",
+              args: [splitId, input.title, input.participants, input.total ?? 0n, allowPartial],
+              chainId: ACTIVE_CHAIN_ID,
+            });
+
+        action.setHash(hash);
+        return hash;
+      } catch (cause) {
+        action.setError(cause as Error);
+        throw cause;
+      }
+    },
+    [action, splitId],
+  );
+
+  return {
+    edit,
+    error: action.error,
+    isPending: action.isPending,
+    isSuccess: action.isSuccess,
+    hash: action.hash,
+  };
+}
+
 export function useWithdraw(splitId?: bigint) {
   const action = useContractAction();
 

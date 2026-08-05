@@ -6,7 +6,7 @@ import type {Address} from "viem";
 import {payFrensSplitterAbi} from "@/lib/abi/payFrensSplitter";
 import {erc20Abi} from "@/lib/abi/erc20";
 import {ACTIVE_CHAIN_ID, splitterAddress, usdcAddress} from "@/lib/chains";
-import {toSplit, type RawSplitView, type Split} from "@/lib/splits";
+import {involves, toSplit, type RawSplitView, type Split} from "@/lib/splits";
 
 /**
  * Reads route through a helper so a missing deploy address surfaces as a
@@ -98,9 +98,18 @@ export function useMySplits(account?: Address) {
 
   const splitsQuery = useSplitsByIds(ids);
 
+  // An edit can drop someone from a roster, and the id stays in their on-chain
+  // joined history for good — the contract cannot splice it out within a
+  // bounded amount of gas. Filtering on current membership is what keeps a
+  // split you were removed from off your home screen.
+  const splits = useMemo(
+    () => splitsQuery.splits?.filter((split) => involves(split, owner)),
+    [splitsQuery.splits, owner],
+  );
+
   return {
     ids,
-    splits: splitsQuery.splits,
+    splits,
     isLoading: idsQuery.isLoading || splitsQuery.isLoading,
     isError: idsQuery.isError || splitsQuery.isError,
     refetch: () => {

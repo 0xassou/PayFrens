@@ -33,6 +33,17 @@ import {SafeERC20} from "./libraries/SafeERC20.sol";
 ///   the moment a single share has been paid — at that point the split must run
 ///   its course, so there is no refund path to reason about or keep in sync
 ///   with the payment/withdrawal accounting.
+///
+/// - **Editing lives in the same window as cancellation.** `editSplit` rewrites
+///   a split's title, roster and amounts, under exactly the three conditions
+///   that gate `cancel`: creator, still open, nothing paid in. Two rules with
+///   one window between them, rather than two windows to keep in sync.
+///
+/// - **An edit can move a share, so payers state what they expect.** Because a
+///   creator can raise someone's share right up until the first payment lands,
+///   `pay` alone would let a share change under a participant who has already
+///   approved USDC. `payExact` refuses to pay anything other than the amount
+///   the caller names, and is what the mini-app uses.
 contract PayFrensSplitter {
     using SafeERC20 for IERC20;
 
@@ -60,6 +71,11 @@ contract PayFrensSplitter {
         uint16 paidCount;
         bool allowPartialWithdraw;
         SplitStatus status;
+        /// @dev Bumped by every `editSplit`. Zero for a split never edited.
+        ///      Exists so anything caching a rendering of this split — the OG
+        ///      share card above all — has a value that changes on an edit;
+        ///      `paidCount` and `status` cannot move while editing is legal.
+        uint32 revision;
         string title;
     }
 
@@ -67,6 +83,12 @@ contract PayFrensSplitter {
         /// @dev Non-zero share doubles as "this address is in the split".
         uint96 share;
         bool paid;
+        /// @dev Sticky: set the first time this address is written into this
+        ///      split, never cleared. It keeps `_joinedSplits` from collecting a
+        ///      duplicate id every time an edit rewrites a roster the account
+        ///      was already in. Packs into the slot `share` already occupies, so
+        ///      it costs nothing on the creation path.
+        bool joinedRecorded;
     }
 
     /// @notice Flattened view of a split, for the UI and for subgraph-less reads.
@@ -82,6 +104,7 @@ contract PayFrensSplitter {
         uint256 paidCount;
         bool allowPartialWithdraw;
         SplitStatus status;
+        uint256 revision;
         address[] participants;
         uint256[] shares;
         bool[] paidFlags;
@@ -146,6 +169,20 @@ contract PayFrensSplitter {
         string title
     );
 
+    /// @notice A split's title, roster or amounts were rewritten by its creator.
+    /// @dev Carries the full new shape rather than a diff: an indexer replaying
+    ///      `SplitCreated` then every `SplitEdited` for an id ends up with the
+    ///      current state without reading storage. `revision` starts at 1.
+    event SplitEdited(
+        uint256 indexed splitId,
+        address indexed creator,
+        uint256 revision,
+        uint256 totalAmount,
+        uint256 participantCount,
+        bool allowPartialWithdraw,
+        string title
+    );
+
     event SharePaid(
         uint256 indexed splitId,
         address indexed participant,
@@ -191,6 +228,9 @@ contract PayFrensSplitter {
     error NotFullyPaid(uint256 splitId, uint256 amountPaid, uint256 totalAmount);
     error NothingToWithdraw(uint256 splitId);
     error PaymentsAlreadyStarted(uint256 splitId);
+    /// @dev `payExact` was called with an amount that is no longer what this
+    ///      participant owes, because the creator edited the split in between.
+    error ShareChanged(uint256 splitId, address participant, uint256 expectedShare, uint256 actualShare);
     error Reentrancy();
 
     /*//////////////////////////////////////////////////////////////
@@ -261,12 +301,22 @@ contract PayFrensSplitter {
         uint96 totalAmount,
         bool allowPartialWithdraw
     ) external returns (uint256 splitId) {
+        return _createSplit(title, participants, _evenShares(participants, totalAmount), allowPartialWithdraw);
+    }
+
+    /// @dev Even division, shared by the create and edit paths so both round the
+    ///      same way. See `createEvenSplit` for what happens to the remainder.
+    function _evenShares(address[] calldata participants, uint96 totalAmount)
+        private
+        pure
+        returns (uint96[] memory shares)
+    {
         uint256 n = participants.length;
         if (n == 0) revert NoParticipants();
         if (n > MAX_PARTICIPANTS) revert TooManyParticipants();
         if (totalAmount < n) revert ZeroShare(participants[n - 1]);
 
-        uint96[] memory shares = new uint96[](n);
+        shares = new uint96[](n);
         // Dividing a uint96 by a positive integer cannot exceed a uint96.
         // forge-lint: disable-next-line(unsafe-typecast)
         uint96 base = uint96(totalAmount / n);
@@ -275,8 +325,6 @@ contract PayFrensSplitter {
         for (uint256 i; i < n; ++i) {
             shares[i] = i < remainder ? base + 1 : base;
         }
-
-        return _createSplit(title, participants, shares, allowPartialWithdraw);
     }
 
     function _createSplit(
@@ -328,13 +376,135 @@ contract PayFrensSplitter {
 
             if (account == address(0)) revert ZeroAddress();
             if (share == 0) revert ZeroShare(account);
-            if (byAddress[account].share != 0) revert DuplicateParticipant(account);
 
-            byAddress[account].share = share;
+            Participant storage entry = byAddress[account];
+            if (entry.share != 0) revert DuplicateParticipant(account);
+
+            entry.share = share;
             list.push(account);
-            _joinedSplits[account].push(splitId);
+
+            // Only the first time this address joins this split. An edit that
+            // keeps someone on the roster must not hand them a second copy of
+            // the id, and removing them cannot take the first copy back —
+            // walking their whole joined history to splice it out is unbounded
+            // gas. Readers filter stale ids by checking membership instead.
+            if (!entry.joinedRecorded) {
+                entry.joinedRecorded = true;
+                _joinedSplits[account].push(splitId);
+            }
 
             total += share;
+        }
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                             EDITING SPLITS
+    //////////////////////////////////////////////////////////////*/
+
+    /// @notice Rewrite a split's title, roster, amounts and withdrawal policy.
+    /// @dev Gated by the same three conditions as `cancel`: you are the creator,
+    ///      the split is still open, and nothing has been paid into it. The last
+    ///      one is what makes this tractable — with `amountPaid == 0` no
+    ///      participant is mid-settlement, `paidCount` is necessarily 0 (every
+    ///      share is non-zero, so paying always moves `amountPaid`), and there
+    ///      is no accounting to reconcile against the new shares.
+    ///
+    ///      The whole roster is replaced, not patched: pass the full list you
+    ///      want to end up with, exactly as you would to `createSplit`. Anyone
+    ///      dropped from it stops being a participant immediately and can no
+    ///      longer pay.
+    ///
+    ///      Note for callers that pay: an edit can move what an address owes, so
+    ///      settle with `payExact` rather than `pay` if you care that the amount
+    ///      you approved is the amount you are charged.
+    function editSplit(
+        uint256 splitId,
+        string calldata title,
+        address[] calldata participants,
+        uint96[] calldata shares,
+        bool allowPartialWithdraw
+    ) external {
+        if (participants.length != shares.length) revert LengthMismatch();
+        _editSplit(splitId, title, participants, shares, allowPartialWithdraw);
+    }
+
+    /// @notice Rewrite a split, dividing `totalAmount` evenly over the new roster.
+    function editEvenSplit(
+        uint256 splitId,
+        string calldata title,
+        address[] calldata participants,
+        uint96 totalAmount,
+        bool allowPartialWithdraw
+    ) external {
+        _editSplit(splitId, title, participants, _evenShares(participants, totalAmount), allowPartialWithdraw);
+    }
+
+    function _editSplit(
+        uint256 splitId,
+        string calldata title,
+        address[] calldata participants,
+        uint96[] memory shares,
+        bool allowPartialWithdraw
+    ) private {
+        // Scoped so the storage pointer is off the stack before the rewrite.
+        {
+            Split storage split = _splits[splitId];
+            _requireExists(split, splitId);
+            if (msg.sender != split.creator) revert NotCreator(splitId);
+            if (split.status != SplitStatus.Open) revert SplitNotOpen(splitId);
+            if (split.amountPaid != 0) revert PaymentsAlreadyStarted(splitId);
+        }
+
+        if (participants.length == 0) revert NoParticipants();
+        if (participants.length > MAX_PARTICIPANTS) revert TooManyParticipants();
+        if (bytes(title).length > MAX_TITLE_BYTES) revert TitleTooLong();
+
+        // Order matters: the old roster has to be gone before the new one is
+        // written. `_registerParticipants` reads a non-zero share as "already in
+        // this split", so anyone kept from one revision to the next would
+        // otherwise be rejected as a duplicate of themselves.
+        _clearParticipants(splitId);
+
+        uint256 total = _registerParticipants(splitId, participants, shares);
+        if (total > type(uint96).max) revert TotalTooLarge();
+
+        uint32 revision;
+        {
+            Split storage split = _splits[splitId];
+            // Bounded by the `TotalTooLarge` check immediately above.
+            // forge-lint: disable-next-line(unsafe-typecast)
+            split.totalAmount = uint96(total);
+            split.participantCount = uint16(participants.length);
+            split.allowPartialWithdraw = allowPartialWithdraw;
+            split.title = title;
+
+            // Checked arithmetic, deliberately: an overflow here would wrap a
+            // cache key back onto a value already served, so the 2**32-nd edit
+            // of one split reverts instead.
+            revision = split.revision + 1;
+            split.revision = revision;
+        }
+
+        emit SplitEdited(splitId, msg.sender, revision, total, participants.length, allowPartialWithdraw, title);
+    }
+
+    /// @dev Empties the roster: every entry's share back to zero — which is what
+    ///      removes them from the split — and the list itself popped clean.
+    ///      `joinedRecorded` is deliberately left standing; see
+    ///      `_registerParticipants`.
+    function _clearParticipants(uint256 splitId) private {
+        address[] storage list = _participantList[splitId];
+        mapping(address => Participant) storage byAddress = _participants[splitId];
+
+        for (uint256 i = list.length; i != 0; --i) {
+            Participant storage entry = byAddress[list[i - 1]];
+            entry.share = 0;
+            // Already false — editing is impossible once anyone has paid — but
+            // written anyway so the invariant does not depend on that argument
+            // holding somewhere else in the file. Same slot as `share`, so it is
+            // part of a write that was happening regardless.
+            entry.paid = false;
+            list.pop();
         }
     }
 
@@ -342,17 +512,49 @@ contract PayFrensSplitter {
                                  PAYING
     //////////////////////////////////////////////////////////////*/
 
-    /// @notice Pay your own share. The one-tap path in the mini-app.
+    /// @notice Pay your own share, whatever it currently is.
     /// @dev Requires a prior USDC approval to this contract.
+    ///
+    ///      Pays the share as it stands when the transaction executes, which is
+    ///      not necessarily the one you saw when you signed: the creator can
+    ///      raise it with `editSplit` right up until the first payment lands,
+    ///      and the mini-app approves `type(uint256).max` once rather than the
+    ///      exact amount each time, so the allowance will not stop a larger
+    ///      charge. Use `payExact` unless you genuinely mean "whatever I owe".
     function pay(uint256 splitId) external {
+        _pay(splitId, msg.sender);
+    }
+
+    /// @notice Pay your own share, but only if it is still `expectedShare`.
+    /// @dev The one-tap path in the mini-app. Reverts with `ShareChanged` if an
+    ///      edit moved the amount between the screen the payer read and the
+    ///      block their transaction landed in, so a creator can never turn an
+    ///      existing USDC allowance into a larger payment than the one the payer
+    ///      agreed to. The check and the transfer are the same transaction —
+    ///      nothing can slip between them.
+    /// @param expectedShare Amount, in USDC base units, the caller means to pay.
+    function payExact(uint256 splitId, uint96 expectedShare) external {
+        _requireShare(splitId, msg.sender, expectedShare);
         _pay(splitId, msg.sender);
     }
 
     /// @notice Pay someone else's share — "I'll spot you". The USDC comes out of
     ///         `msg.sender`; the share is credited to `participant`, who is the
     ///         one recorded as having paid.
+    /// @dev Carries the same caveat as `pay`; `payForExact` is the guarded form.
     function payFor(uint256 splitId, address participant) external {
         _pay(splitId, participant);
+    }
+
+    /// @notice Spot someone, for no more than `expectedShare`.
+    function payForExact(uint256 splitId, address participant, uint96 expectedShare) external {
+        _requireShare(splitId, participant, expectedShare);
+        _pay(splitId, participant);
+    }
+
+    function _requireShare(uint256 splitId, address participant, uint96 expectedShare) private view {
+        uint96 actual = _participants[splitId][participant].share;
+        if (actual != expectedShare) revert ShareChanged(splitId, participant, expectedShare, actual);
     }
 
     function _pay(uint256 splitId, address participant) private nonReentrant {
@@ -493,6 +695,7 @@ contract PayFrensSplitter {
             paidCount: split.paidCount,
             allowPartialWithdraw: split.allowPartialWithdraw,
             status: split.status,
+            revision: split.revision,
             participants: participants,
             shares: shares,
             paidFlags: paidFlags

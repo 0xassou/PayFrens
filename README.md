@@ -12,8 +12,14 @@ whole thing is funded, the creator withdraws the total.
    custom amount per person.
 2. **Share** — the split URL unfurls as an interactive card in Farcaster / Base
    App feeds, with a live `X/Y paid` progress image.
-3. **Pay** — participants approve USDC once and tap *Pay my share*.
-4. **Withdraw** — when everyone has paid, the creator withdraws. A 0.5% protocol
+3. **Fix it if it's wrong** — until the first payment lands, the creator can
+   edit the title, the amounts and who's in it, or cancel the split outright.
+   The link keeps working: an edit rewrites the split in place rather than
+   making a new one. Once someone has paid, both close.
+4. **Pay** — participants approve USDC once and tap *Pay my share*. The app
+   names the amount on chain, so an edit can never charge someone more than the
+   figure they tapped.
+5. **Withdraw** — when everyone has paid, the creator withdraws. A 0.5% protocol
    fee is taken **at withdrawal only**, and is shown in the UI before the user
    confirms.
 

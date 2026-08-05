@@ -40,8 +40,8 @@ fee is deducted when the creator pulls the money out, and goes to `treasury`.
 `quoteWithdrawal()` returns the exact `(net, fee)` pair so the UI can show the
 number before the user signs.
 
-**Partial withdrawal is opt-in per split.** The creator chooses at creation time
-via `allowPartialWithdraw`. With it off (the default), `withdraw` reverts until
+**Partial withdrawal is opt-in per split.** The creator chooses it via
+`allowPartialWithdraw`, at creation or in a later edit. With it off (the default), `withdraw` reverts until
 every participant has paid — the safe behaviour for a bill you intend to settle
 in full. With it on, the creator can pull whatever has arrived so far, which
 suits open-ended collections like a group gift where a straggler may never pay.
@@ -52,6 +52,36 @@ paid into it — the moment `amountPaid` is nonzero, `cancel` reverts. This is t
 escape hatch for a split that should never have been created, not a way to
 unwind one that is already underway: once a single share has landed, the rest
 of the group pays normally and there is no refund path back out.
+
+**Editing shares that window.** `editSplit` (and `editEvenSplit`) rewrite a
+split's title, roster, amounts and withdrawal policy under exactly the three
+conditions that gate `cancel`: creator, still open, `amountPaid == 0`. One
+window for both rules, rather than two to keep in sync — and with nothing paid
+in there is no accounting to reconcile against the new shares.
+
+The roster is replaced wholesale, not patched: pass the full list you want to
+end up with. Anyone dropped from it stops being a participant on the spot and
+can no longer pay. Two consequences worth knowing:
+
+- `getSplit().revision` counts the edits. It exists because a rendering cached
+  against a split — the OG share card above all — needs something that moves
+  when the split changes, and editing is precisely the case where `paidCount`
+  and `status` cannot.
+- `splitsJoinedBy()` is append-only. Removing someone cannot take the id back
+  out of their joined history, because splicing an unbounded array is unbounded
+  gas, so a removed participant keeps a stale id in that list. Readers filter
+  it by checking current membership — `getParticipant()` returns a zero share
+  for anyone no longer in the split. Being kept across an edit, or removed and
+  later added back, never duplicates the entry.
+
+**Payers state what they expect.** Because a creator can raise a share right up
+until the first payment lands — and the mini-app approves USDC once, unlimited,
+rather than per payment — plain `pay()` would let an edit charge someone more
+than the screen they were looking at said. `payExact(splitId, expectedShare)`
+reverts with `ShareChanged` unless the amount still matches, and is what the
+app calls. `pay()` and `payFor()` remain for callers that genuinely mean
+"whatever I owe right now"; `payForExact` is the guarded form of spotting
+someone.
 
 ## Deployment
 
