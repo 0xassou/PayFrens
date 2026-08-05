@@ -81,6 +81,7 @@ export function SplitScreen({id}: {id: string}) {
   const complete = isFullyPaid(split);
   const cancelled = split.status === SplitStatus.Cancelled;
   const available = withdrawable(split);
+  const isCreator = Boolean(address && split.creator.toLowerCase() === address.toLowerCase());
 
   return (
     <AppShell back="/" action={<ShareButton splitId={id} title={split.title} />}>
@@ -130,7 +131,7 @@ export function SplitScreen({id}: {id: string}) {
         {!cancelled && (
           <WithdrawalPolicy
             allowPartial={split.allowPartialWithdraw}
-            isCreator={Boolean(address && split.creator.toLowerCase() === address.toLowerCase())}
+            isCreator={isCreator}
             className="mb-6"
           />
         )}
@@ -140,10 +141,12 @@ export function SplitScreen({id}: {id: string}) {
         </h2>
         <ParticipantList split={split} profiles={profiles} viewer={address} />
 
-        {/* Cancellation only ever succeeds before anyone has paid — once one
-            share lands, this option has to disappear rather than let the
-            creator hit a revert. */}
-        {role === "creator-awaiting" && !cancelled && split.amountPaid === 0n && (
+        {/* Mirrors `cancel()` exactly: creator, still open, nothing paid in.
+            Deliberately keyed off `isCreator` and not the viewer role — a
+            creator who is also a participant in their own split reads as
+            "participant-owes" (they are asked to pay before being told to
+            wait), which hid this button on the most common split of all. */}
+        {isCreator && !cancelled && split.amountPaid === 0n && (
           <div className="mt-4">
             {cancellation.error && (
               <p className="mb-2 text-center text-xs text-danger">{friendlyError(cancellation.error)}</p>
@@ -288,29 +291,48 @@ function ShareButton({splitId, title}: {splitId: string; title: string}) {
     if (error) reportError("share split", error);
   }, [error]);
 
+  const flash = () => {
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  };
+
   const handleShare = async () => {
     const url = splitUrl(splitId);
-    const text = title
+    const invite = title
       ? `Splitting ${title} on PayFrens — grab your share 👇`
       : "Split this with me on PayFrens 👇";
 
+    // Inside the Mini App host the cast composer keeps the two apart: `text` is
+    // the cast body, `embeds` the link it unfurls.
     if (isInMiniApp) {
-      composeCast({text, embeds: [url]});
+      composeCast({text: invite, embeds: [url]});
       return;
     }
+
+    // Everywhere else the invite line rides in `title`, and `text` is never
+    // sent. A Web Share target is free to flatten the payload into one string,
+    // and Chrome on desktop puts `text` *after* the url — the recipient then
+    // gets `…/split/0 Splitting drink buying…`, which resolves as
+    // `/split/0%20Splitting%20drink%20buying…` and 404s. Nothing may follow the
+    // url, so nothing is offered that could.
+    const payload = {title: invite, url};
 
     if (typeof navigator !== "undefined" && navigator.share) {
-      try {
-        await navigator.share({title: title || "PayFrens split", text, url});
-      } catch {
-        // User dismissed the native share sheet — not a failure.
+      if (!navigator.canShare || navigator.canShare(payload)) {
+        try {
+          await navigator.share(payload);
+          return;
+        } catch (cause) {
+          // A dismissed sheet is not a failure and needs no consolation copy.
+          if (isAbort(cause)) return;
+          // Anything else means the share never happened — fall through rather
+          // than leave the button looking inert.
+          reportError("share split", cause as Error);
+        }
       }
-      return;
     }
 
-    await navigator.clipboard.writeText(url);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1500);
+    if (await copyLink(url)) flash();
   };
 
   return (
@@ -323,6 +345,23 @@ function ShareButton({splitId, title}: {splitId: string; title: string}) {
       {copied ? <CheckIcon /> : <ShareIcon />}
     </button>
   );
+}
+
+/** The one rejection `navigator.share` makes that means "nothing went wrong". */
+function isAbort(cause: unknown): boolean {
+  return cause instanceof Error && cause.name === "AbortError";
+}
+
+/** Copies the bare link, reporting rather than swallowing a refused clipboard. */
+async function copyLink(url: string): Promise<boolean> {
+  try {
+    if (!navigator.clipboard) throw new Error("Clipboard unavailable");
+    await navigator.clipboard.writeText(url);
+    return true;
+  } catch (cause) {
+    reportError("copy split link", cause as Error);
+    return false;
+  }
 }
 
 function ShareIcon() {
