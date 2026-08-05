@@ -485,7 +485,9 @@ contract PayFrensSplitter {
             split.revision = revision;
         }
 
-        emit SplitEdited(splitId, msg.sender, revision, total, participants.length, allowPartialWithdraw, title);
+        emit SplitEdited(
+            splitId, msg.sender, revision, total, participants.length, allowPartialWithdraw, title
+        );
     }
 
     /// @dev Empties the roster: every entry's share back to zero — which is what

@@ -187,6 +187,72 @@ export const payFrensSplitterAbi = [
   },
   {
     "type": "function",
+    "name": "editEvenSplit",
+    "inputs": [
+      {
+        "name": "splitId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "title",
+        "type": "string",
+        "internalType": "string"
+      },
+      {
+        "name": "participants",
+        "type": "address[]",
+        "internalType": "address[]"
+      },
+      {
+        "name": "totalAmount",
+        "type": "uint96",
+        "internalType": "uint96"
+      },
+      {
+        "name": "allowPartialWithdraw",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "editSplit",
+    "inputs": [
+      {
+        "name": "splitId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "title",
+        "type": "string",
+        "internalType": "string"
+      },
+      {
+        "name": "participants",
+        "type": "address[]",
+        "internalType": "address[]"
+      },
+      {
+        "name": "shares",
+        "type": "uint96[]",
+        "internalType": "uint96[]"
+      },
+      {
+        "name": "allowPartialWithdraw",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "getParticipant",
     "inputs": [
       {
@@ -305,6 +371,11 @@ export const payFrensSplitterAbi = [
             "internalType": "enum PayFrensSplitter.SplitStatus"
           },
           {
+            "name": "revision",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
             "name": "participants",
             "type": "address[]",
             "internalType": "address[]"
@@ -396,6 +467,11 @@ export const payFrensSplitterAbi = [
             "internalType": "enum PayFrensSplitter.SplitStatus"
           },
           {
+            "name": "revision",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
             "name": "participants",
             "type": "address[]",
             "internalType": "address[]"
@@ -462,6 +538,24 @@ export const payFrensSplitterAbi = [
   },
   {
     "type": "function",
+    "name": "payExact",
+    "inputs": [
+      {
+        "name": "splitId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "expectedShare",
+        "type": "uint96",
+        "internalType": "uint96"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "payFor",
     "inputs": [
       {
@@ -473,6 +567,29 @@ export const payFrensSplitterAbi = [
         "name": "participant",
         "type": "address",
         "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "payForExact",
+    "inputs": [
+      {
+        "name": "splitId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "participant",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "expectedShare",
+        "type": "uint96",
+        "internalType": "uint96"
       }
     ],
     "outputs": [],
@@ -843,6 +960,55 @@ export const payFrensSplitterAbi = [
   },
   {
     "type": "event",
+    "name": "SplitEdited",
+    "inputs": [
+      {
+        "name": "splitId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "creator",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "revision",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "totalAmount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "participantCount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "allowPartialWithdraw",
+        "type": "bool",
+        "indexed": false,
+        "internalType": "bool"
+      },
+      {
+        "name": "title",
+        "type": "string",
+        "indexed": false,
+        "internalType": "string"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "SplitFunded",
     "inputs": [
       {
@@ -1021,6 +1187,32 @@ export const payFrensSplitterAbi = [
     "type": "error",
     "name": "Reentrancy",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ShareChanged",
+    "inputs": [
+      {
+        "name": "splitId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "participant",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "expectedShare",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "actualShare",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
   },
   {
     "type": "error",

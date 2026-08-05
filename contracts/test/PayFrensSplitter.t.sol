@@ -1224,6 +1224,8 @@ contract PayFrensSplitterTest is Test {
         address[] memory many = new address[](n);
         uint96[] memory shares = new uint96[](n);
         for (uint256 i; i < n; ++i) {
+            // casting to 'uint160' is safe because the loop stops at 101
+            // forge-lint: disable-next-line(unsafe-typecast)
             many[i] = address(uint160(i + 1));
             shares[i] = ONE;
         }
@@ -1327,7 +1329,9 @@ contract PayFrensSplitterTest is Test {
         vm.prank(creator);
         splitter.editSplit(id, "Dinner", _pair(bob, carol), _shares(5 * ONE, 5 * ONE), false);
 
-        vm.expectRevert(abi.encodeWithSelector(PayFrensSplitter.ShareChanged.selector, id, alice, 10 * ONE, 0));
+        vm.expectRevert(
+            abi.encodeWithSelector(PayFrensSplitter.ShareChanged.selector, id, alice, 10 * ONE, 0)
+        );
         vm.prank(alice);
         splitter.payExact(id, 10 * ONE);
     }
